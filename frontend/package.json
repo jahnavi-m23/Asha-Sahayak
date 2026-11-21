@@ -1,0 +1,26 @@
+{
+  "name": "asha-sahayak-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "postinstall": "node -e \"try { const fs = require('fs'); const file = 'node_modules/rollup/dist/native.js'; if (fs.existsSync(file)) { let c = fs.readFileSync(file, 'utf8'); if (!c.includes('@rollup/wasm-node')) { c = c.replace('try {\\n\\t\\treturn require(id);\\n\\t} catch (error) {', 'try {\\n\\t\\treturn require(id);\\n\\t} catch (error) {\\n\\t\\ttry { return require(\\'@rollup/wasm-node/dist/native.js\\'); } catch (w) {}'); fs.writeFileSync(file, c); } } } catch(e){}\""
+  },
+  "dependencies": {
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "vite": "^5.4.10"
+  },
+  "optionalDependencies": {
+    "@rollup/wasm-node": "^4.68.8"
+  }
+}
