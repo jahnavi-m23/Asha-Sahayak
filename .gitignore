@@ -1,4 +1,3 @@
-
 # Environment variables and API secrets
 .env
 .env.*
@@ -10,7 +9,6 @@ __pycache__/
 .venv/
 venv/
 env/
-
 .pytest_cache/
 
 # Node.js and React
