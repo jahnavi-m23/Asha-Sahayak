@@ -3,9 +3,31 @@
 Configuration management for ASHA SAHAYAK Phase 2.
 Loads environment variables safely with defaults and validation.
 """
+import os
 from typing import Optional
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, BaseModel
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    class BaseSettings(BaseModel):
+        def __init__(self, **kwargs):
+            env_kwargs = {}
+            for k, f in self.__class__.model_fields.items():
+                env_val = os.getenv(k)
+                if env_val is not None:
+                    ann = f.annotation
+                    if ann == bool or ann == Optional[bool]:
+                        env_kwargs[k] = env_val.lower() in ("true", "1", "yes")
+                    elif ann == float or ann == Optional[float]:
+                        env_kwargs[k] = float(env_val)
+                    elif ann == int or ann == Optional[int]:
+                        env_kwargs[k] = int(env_val)
+                    else:
+                        env_kwargs[k] = env_val
+            env_kwargs.update(kwargs)
+            super().__init__(**env_kwargs)
+    SettingsConfigDict = None
 
 
 class Settings(BaseSettings):
@@ -50,12 +72,16 @@ class Settings(BaseSettings):
     DEFAULT_LANGUAGE: str = "kn-en"
     REQUIRE_EXPLICIT_CONFIRMATION: bool = True
     ALLOW_MOCK_FALLBACK: bool = True  # Allows offline/mock operations when API keys are not supplied
-    
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
-    )
+
+    if SettingsConfigDict:
+        model_config = SettingsConfigDict(
+            env_file=".env",
+            env_file_encoding="utf-8",
+            extra="ignore"
+        )
+    else:
+        model_config = {"extra": "ignore"}
 
 
+# Global settings singleton instance
 settings = Settings()

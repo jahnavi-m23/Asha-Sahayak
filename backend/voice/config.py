@@ -3,20 +3,21 @@ import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-from dotenv import load_dotenv
-
-# Robustly resolve .env path: search backend/.env first, then root .env
 _current_file = Path(__file__).resolve()
 _backend_dir = _current_file.parent.parent
 _backend_env = _backend_dir / ".env"
 _root_env = _backend_dir.parent / ".env"
 
-if _backend_env.is_file():
-    load_dotenv(dotenv_path=_backend_env)
-elif _root_env.is_file():
-    load_dotenv(dotenv_path=_root_env)
-else:
-    load_dotenv()
+try:
+    from dotenv import load_dotenv
+    if _backend_env.is_file():
+        load_dotenv(dotenv_path=_backend_env)
+    elif _root_env.is_file():
+        load_dotenv(dotenv_path=_root_env)
+    else:
+        load_dotenv()
+except ImportError:
+    pass
 
 # The 10 Indian Languages documented and supported by Gnani AI
 # Voices updated to verified, tested voices available on Gnani Timbre v2.5 model

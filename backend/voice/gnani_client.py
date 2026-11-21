@@ -3,11 +3,15 @@ import logging
 import asyncio
 import inspect
 from typing import AsyncGenerator, Optional, Dict, Any
-import websockets
 try:
-    from websockets.asyncio.client import ClientConnection
+    import websockets
+    try:
+        from websockets.asyncio.client import ClientConnection
+    except ImportError:
+        from websockets.client import WebSocketClientProtocol as ClientConnection
 except ImportError:
-    from websockets.client import WebSocketClientProtocol as ClientConnection
+    websockets = None
+    ClientConnection = Any
 
 from backend.voice.config import config, SUPPORTED_LANGUAGES, SPECIAL_STT_MODES
 from backend.voice.medical_vocabulary import get_formatted_keyterms_header
