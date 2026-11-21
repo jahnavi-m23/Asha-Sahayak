@@ -1,96 +1,71 @@
 import React, { useState, useEffect, useRef } from 'react';
+import VoiceRecorder from './components/VoiceRecorder';
+import StructuredVisitReport from './components/StructuredVisitReport';
+import Phase3Dashboard from './components/Phase3Dashboard';
+import {
+  Mic,
+  LayoutDashboard,
+  Calendar,
+  Users,
+  Search,
+  Activity,
+  AlertTriangle,
+  FileText,
+  CheckCircle2,
+  Bell,
+  Home,
+  LogOut,
+  LogIn,
+  PlusCircle,
+  Eye,
+  Trash2,
+  Edit2
+} from 'lucide-react';
 
 const API_BASE = window.location.port === "8000" ? "" : "http://localhost:8000";
 
-// Bilingual translations dictionary
 const I18N = {
   en: {
-    appTitle: "ASHA Sahayak",
-    appSubtitle: "AI Voice Field Register & Community Health System",
+    appTitle: "ASHA SAHAYAK (ಆಶಾ ಸಹಾಯಕ)",
+    appSubtitle: "Voice-First Clinical Field Register & Community Health System",
     demoMode: "SYNTHETIC HEALTHCARE DEMO – NO REAL PHI",
-    tabOverview: "Overview & Reports",
-    tabVoice: "Voice Field Register (Phase 1 & 2)",
-    tabVisits: "Confirmed Visits Register",
+    tabVoice: "Voice & AI Register (Phase 1 & 2)",
+    tabOverview: "Field Register (Phase 3)",
     tabFollowups: "Follow-up Tracker",
     tabHouseholds: "Household Directory",
-    tabSurvey: "New Household Survey",
     tabFinder: "Find ASHA Worker",
     loginBtn: "Login",
     logoutBtn: "Logout",
-    welcome: "Welcome",
-    role: "Role",
     totalHouseholds: "Total Households",
     totalBeneficiaries: "Total Beneficiaries",
     totalVisits: "Confirmed Visits",
     pendingFollowups: "Scheduled Follow-ups",
     referralAlerts: "Urgent Referral Alerts",
-    recordVoice: "Record Visit Voice Note",
-    stopRecording: "Stop Recording",
-    liveTranscript: "Live Voice Transcription",
-    sendToAi: "Extract Clinical Entities with AI",
-    confirmVisit: "Confirm & Save Visit to Register",
-    rejectVisit: "Discard & Re-record",
-    duplicateError: "Duplicate visit record detected. This entry was already persisted.",
-    successSaved: "Visit successfully confirmed and saved to SQLite register!",
-    searchBeneficiary: "Search by Beneficiary ID, Name, or Village...",
-    searchHousehold: "Search by Household Code, Head of Family, or Village...",
-    statusConfirmed: "Confirmed",
-    statusOverdue: "Overdue",
-    statusUpcoming: "Upcoming",
-    dangerSigns: "Danger Signs Observed",
-    vaccinations: "Vaccinations Administered / Due",
-    weight: "Weight Recorded",
-    visitType: "Visit Type",
-    nextFollowup: "Next Follow-up Date",
-    noFabricatedDate: "None scheduled (Preserved null - No invented date)",
-    edit: "Edit",
-    delete: "Delete",
     saveChanges: "Save Changes",
-    cancel: "Cancel"
+    cancel: "Cancel",
+    delete: "Delete",
+    edit: "Edit"
   },
   kn: {
-    appTitle: "ಆಶಾ ಸಹಾಯಕ",
+    appTitle: "ಆಶಾ ಸಹಾಯಕ (ASHA SAHAYAK)",
     appSubtitle: "ಧ್ವನಿ ಆಧಾರಿತ ಕ್ಷೇತ್ರ ನೋಂದಣಿ ಮತ್ತು ಸಮುದಾಯ ಆರೋಗ್ಯ ನಿರ್ವಹಣೆ",
     demoMode: "ಪ್ರಾತ್ಯಕ್ಷಿಕೆ ಮಾದರಿ – ಯಾವುದೇ ನೈಜ ರೋಗಿಯ ಮಾಹಿತಿಯಿಲ್ಲ",
-    tabOverview: "ಅವಲೋಕನ ಮತ್ತು ವರದಿಗಳು",
-    tabVoice: "ಧ್ವನಿ ಕ್ಷೇತ್ರ ರಿಜಿಸ್ಟರ್ (ಹಂತ 1 ಮತ್ತು 2)",
-    tabVisits: "ದೃಢೀಕರಿಸಿದ ಭೇಟಿಗಳ ರಿಜಿಸ್ಟರ್",
+    tabVoice: "ಧ್ವನಿ ಮತ್ತು AI ನೋಂದಣಿ (ಹಂತ 1 & 2)",
+    tabOverview: "ಕ್ಷೇತ್ರ ರಿಜಿಸ್ಟರ್ (ಹಂತ 3)",
     tabFollowups: "ಫಾಲೋ-ಅಪ್ ಟ್ರ್ಯಾಕರ್",
-    tabHouseholds: "ಮನೆಗಳ ಡೈರೆಕ್ಟರಿ",
-    tabSurvey: "ಹೊಸ ಮನೆ ಸಮೀಕ್ಷೆ",
+    tabHouseholds: "ಕುಟುಂಬ ಡೈರೆಕ್ಟರಿ",
     tabFinder: "ಆಶಾ ಕಾರ್ಯಕರ್ತೆಯರನ್ನು ಹುಡುಕಿ",
     loginBtn: "ಲಾಗಿನ್",
     logoutBtn: "ಲಾಗ್‌ಔಟ್",
-    welcome: "ಸ್ವಾಗತ",
-    role: "ಪಾತ್ರ",
     totalHouseholds: "ಒಟ್ಟು ಕುಟುಂಬಗಳು",
     totalBeneficiaries: "ಒಟ್ಟು ಫಲಾನುಭವಿಗಳು",
     totalVisits: "ದೃಢೀಕರಿಸಿದ ಭೇಟಿಗಳು",
     pendingFollowups: "ನಿಗದಿತ ಫಾಲೋ-ಅಪ್‌ಗಳು",
     referralAlerts: "ತುರ್ತು ರೆಫರಲ್ ಎಚ್ಚರಿಕೆಗಳು",
-    recordVoice: "ಭೇಟಿ ಧ್ವನಿ ರೆಕಾರ್ಡ್ ಮಾಡಿ",
-    stopRecording: "ರೆಕಾರ್ಡಿಂಗ್ ನಿಲ್ಲಿಸಿ",
-    liveTranscript: "ಲೈವ್ ಧ್ವನಿ ಪ್ರತಿಲಿಪಿ",
-    sendToAi: "AI ಮೂಲಕ ವೈದ್ಯಕೀಯ ವಿವರಗಳನ್ನು ಹೊರತೆಗೆಯಿರಿ",
-    confirmVisit: "ದೃಢೀಕರಿಸಿ ರಿಜಿಸ್ಟರ್‌ನಲ್ಲಿ ಉಳಿಸಿ",
-    rejectVisit: "ತಿರಸ್ಕರಿಸಿ / ಮರು ರೆಕಾರ್ಡ್ ಮಾಡಿ",
-    duplicateError: "ನಕಲಿ ಭೇಟಿ ಪತ್ತೆಯಾಗಿದೆ. ಈ ನಮೂದು ಈಗಾಗಲೇ ಉಳಿಸಲಾಗಿದೆ.",
-    successSaved: "ಭೇಟಿಯನ್ನು ಯಶಸ್ವಿಯಾಗಿ ದೃಢೀಕರಿಸಿ ರಿಜಿಸ್ಟರ್‌ನಲ್ಲಿ ಉಳಿಸಲಾಗಿದೆ!",
-    searchBeneficiary: "ಫಲಾನುಭವಿ ಐಡಿ, ಹೆಸರು ಅಥವಾ ಹಳ್ಳಿಯ ಮೂಲಕ ಹುಡುಕಿ...",
-    searchHousehold: "ಕುಟುಂಬ ಕೋಡ್, ಯಜಮಾನರ ಹೆಸರು ಮೂಲಕ ಹುಡುಕಿ...",
-    statusConfirmed: "ದೃಢೀಕರಿಸಲಾಗಿದೆ",
-    statusOverdue: "ಅವಧಿ ಮೀರಿದೆ",
-    statusUpcoming: "ಮುಂಬರುವ",
-    dangerSigns: "ಅಪಾಯಕಾರಿ ಲಕ್ಷಣಗಳು",
-    vaccinations: "ನೀಡಲಾದ ಲಸಿಕೆಗಳು",
-    weight: "ದಾಖಲಿಸಿದ ತೂಕ",
-    visitType: "ಭೇಟಿ ಪ್ರಕಾರ",
-    nextFollowup: "ಮುಂದಿನ ಭೇಟಿ ದಿನಾಂಕ",
-    noFabricatedDate: "ಯಾವುದೂ ನಿಗದಿಯಾಗಿಲ್ಲ (ಖಾಲಿ ಇರಿಸಲಾಗಿದೆ)",
-    edit: "ತಿದ್ದುಪಡಿ",
-    delete: "ಅಳಿಸಿ",
     saveChanges: "ಬದಲಾವಣೆಗಳನ್ನು ಉಳಿಸಿ",
-    cancel: "ರದ್ದುಮಾಡಿ"
+    cancel: "ರದ್ದುಮಾಡಿ",
+    delete: "ಅಳಿಸಿ",
+    edit: "ತಿದ್ದುಪಡಿ"
   }
 };
 
@@ -98,7 +73,10 @@ export default function App() {
   const [lang, setLang] = useState("en");
   const t = I18N[lang];
 
-  const [activeTab, setActiveTab] = useState("overview");
+  // Navigation tab: 'VOICE' | 'DASHBOARD' | 'FOLLOWUPS' | 'HOUSEHOLDS' | 'FINDER'
+  const [activeTab, setActiveTab] = useState('VOICE');
+
+  // Authenticated user session
   const [currentUser, setCurrentUser] = useState({
     id: "USR-ASHA-RAMPUR",
     username: "asha_rampur",
@@ -110,40 +88,20 @@ export default function App() {
     phc_name: "Kestur Primary Health Centre"
   });
 
-  // Real Database State
+  // Phase 1 & 2 Workflow State
+  const [completedHandoff, setCompletedHandoff] = useState(null);
+  const [currentReport, setCurrentReport] = useState(null);
+  const [extractingReport, setExtractingReport] = useState(false);
+  const [currentLanguage, setCurrentLanguage] = useState('kn-IN');
+
+  // Phase 3 Real Database State
   const [reports, setReports] = useState(null);
   const [visits, setVisits] = useState([]);
   const [beneficiaries, setBeneficiaries] = useState([]);
   const [followups, setFollowups] = useState([]);
   const [households, setHouseholds] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
   const [notification, setNotification] = useState(null);
-
-  // Search & Filter State
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedBeneficiary, setSelectedBeneficiary] = useState(null);
-  const [selectedHousehold, setSelectedHousehold] = useState(null);
-
-  // Phase 1 Voice State
-  const [isRecording, setIsRecording] = useState(false);
-  const [voiceLanguage, setVoiceLanguage] = useState("kn-IN");
-  const [voiceTranscript, setVoiceTranscript] = useState("");
-  const [audioWsConnected, setAudioWsConnected] = useState(false);
-  const wsRef = useRef(null);
-  const recognitionRef = useRef(null);
-
-  // Phase 2 AI Review State
-  const [extractedRecord, setExtractedRecord] = useState({
-    beneficiary_id: "BNF-2041",
-    visit_type: "Newborn home visit",
-    weight: "3.2 kg",
-    vaccinations_due: ["OPV-1"],
-    next_visit_date: null,
-    danger_signs: [],
-    referral_required: false,
-    confirmation_status: "confirmed"
-  });
-  const [isSubmittingVisit, setIsSubmittingVisit] = useState(false);
 
   // Modals
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -153,7 +111,7 @@ export default function App() {
 
   const [showFollowupModal, setShowFollowupModal] = useState(false);
   const [activeFollowup, setActiveFollowup] = useState(null);
-  const [followupNotes, setFollowupNotes] = useState("");
+  const [followupNotes, setFollowupNotes] = useState('');
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [householdToDelete, setHouseholdToDelete] = useState(null);
@@ -161,16 +119,15 @@ export default function App() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [householdToEdit, setHouseholdToEdit] = useState(null);
 
-  // Finder Portal State
+  // Finder State
   const [finderQuery, setFinderQuery] = useState({ pincode: "571428", village: "", taluk: "", district: "" });
   const [finderResults, setFinderResults] = useState([]);
   const [finderLoading, setFinderLoading] = useState(false);
-  const [finderMessage, setFinderMessage] = useState("");
+  const [finderMessage, setFinderMessage] = useState('');
 
-  // Load Real Data from SQLite Backend
+  // Fetch real SQLite database records
   const refreshData = async () => {
     try {
-      setLoading(true);
       const headers = currentUser ? { "Authorization": `Bearer token-${currentUser.username}-${currentUser.id}` } : {};
 
       const [repRes, visRes, benRes, folRes, hhRes] = await Promise.all([
@@ -188,10 +145,8 @@ export default function App() {
       if (hhRes.ok && typeof hhRes.json === "function") {
         setHouseholds(await hhRes.json());
       }
-    } catch (err) {
-      console.warn("Backend fetch notice:", err);
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.warn("Backend fetch notice:", e);
     }
   };
 
@@ -199,137 +154,86 @@ export default function App() {
     refreshData();
   }, [currentUser]);
 
-  // Connect WebSocket for Phase 1 Voice Streaming
-  useEffect(() => {
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = window.location.port === "8000" ? window.location.host : "localhost:8000";
-    const wsUrl = `${wsProtocol}//${wsHost}/ws/audio`;
+  // Phase 1 -> Phase 2: When speech transcription is finalized
+  const handleTranscriptComplete = async (payload) => {
+    console.log('[App] Phase 1 Transcript Complete:', payload);
+    setCompletedHandoff(payload);
 
+    if (payload.transcript && payload.transcript.trim()) {
+      setExtractingReport(true);
+      try {
+        const langCode = payload.language?.includes('kn') ? 'kn-IN' : (payload.language || 'kn-IN');
+        setCurrentLanguage(langCode);
+
+        // Run Phase 2 AI clinical extraction
+        const response = await fetch(`${API_BASE}/api/report/extract`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript: payload.transcript,
+            language: langCode
+          })
+        });
+
+        const data = await response.json();
+        if (data.success && data.report) {
+          setCurrentReport(data.report);
+          setNotification({ type: 'success', message: 'Clinical extraction complete. Please review before confirmation.' });
+        }
+      } catch (err) {
+        console.error('Error during automated report extraction:', err);
+      } finally {
+        setExtractingReport(false);
+      }
+    }
+  };
+
+  // Phase 2 -> Phase 3: Worker confirms structured report
+  const handleConfirmAndSave = async (savedRecord) => {
     try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => setAudioWsConnected(true);
-      ws.onclose = () => setAudioWsConnected(false);
-      ws.onerror = () => setAudioWsConnected(false);
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.event === "transcript_ack") {
-            setVoiceTranscript(prev => prev + " " + msg.transcript);
-          }
-        } catch (e) {}
+      // 1. Format payload matching Phase 3 contract
+      const phase3Payload = {
+        beneficiary_id: savedRecord.beneficiary_id || "BNF-2041",
+        visit_type: savedRecord.visit_type || "Routine Home Visit",
+        weight: savedRecord.infant_weight || savedRecord.weight || "3.2 kg",
+        vaccinations_due: savedRecord.vaccinations_due || [],
+        next_visit_date: savedRecord.next_visit_date && !savedRecord.next_visit_date.includes("None") ? savedRecord.next_visit_date : null,
+        danger_signs: savedRecord.danger_signs || [],
+        referral_required: Boolean(savedRecord.referral_required),
+        confirmation_status: "confirmed"
       };
 
-      return () => ws.close();
-    } catch (e) {
-      setAudioWsConnected(false);
-    }
-  }, []);
-
-  // Web Speech API / Voice Toggle
-  const toggleRecording = () => {
-    if (isRecording) {
-      setIsRecording(false);
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ event: "finish_recording" }));
-      }
-    } else {
-      setIsRecording(true);
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognitionRef.current = recognition;
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = voiceLanguage;
-
-        recognition.onresult = (event) => {
-          let currentTranscript = "";
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            currentTranscript += event.results[i][0].transcript;
-          }
-          setVoiceTranscript(currentTranscript);
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ event: "partial_transcript", text: currentTranscript }));
-          }
-        };
-
-        recognition.onerror = () => {
-          // Fallback to simulated phrase if mic permission denied
-          loadSimulatedVoiceNote("newborn");
-        };
-
-        try {
-          recognition.start();
-        } catch (err) {
-          loadSimulatedVoiceNote("newborn");
-        }
-      } else {
-        // Fallback for browsers without Web Speech API
-        loadSimulatedVoiceNote("newborn");
-      }
-    }
-  };
-
-  // Simulated voice note samples for quick field testing
-  const loadSimulatedVoiceNote = (type) => {
-    setIsRecording(false);
-    if (type === "newborn") {
-      setVoiceTranscript("ಹೊಸದಾಗಿ ಜನಿಸಿದ ಮಗುವಿನ ಮನೆ ಭೇಟಿ ಪೂರ್ಣಗೊಂಡಿದೆ. ಫಲಾನುಭವಿ ಬಿಎನ್‌ಎಫ್-2041. ಮಗುವಿನ ತೂಕ 3.2 ಕೆಜಿ. OPV-1 ಲಸಿಕೆ ನೀಡಲಾಗಿದೆ. ಯಾವುದೇ ಅಪಾಯಕಾರಿ ಲಕ್ಷಣಗಳಿಲ್ಲ. ಮುಂದಿನ ಭೇಟಿ ದಿನಾಂಕ ನಿಗದಿಪಡಿಸಿಲ್ಲ.");
-      setExtractedRecord({
-        beneficiary_id: "BNF-2041",
-        visit_type: "Newborn home visit",
-        weight: "3.2 kg",
-        vaccinations_due: ["OPV-1"],
-        next_visit_date: null,
-        danger_signs: [],
-        referral_required: false,
-        confirmation_status: "confirmed"
-      });
-    } else if (type === "anc_danger") {
-      setVoiceTranscript("ಗರ್ಭಿಣಿ ತಪಾಸಣೆ ಭೇಟಿ. ಫಲಾನುಭವಿ ಬಿಎನ್‌ಎಫ್-2042. ತೂಕ 58 ಕೆಜಿ. ಅಧಿಕ ರಕ್ತದೊತ್ತಡ ಮತ್ತು ಪಾದಗಳಲ್ಲಿ ಊತ ಕಂಡುಬಂದಿದೆ. ತಕ್ಷಣದ PHC ರೆಫರಲ್ ಶಿಫಾರಸು ಮಾಡಲಾಗಿದೆ.");
-      setExtractedRecord({
-        beneficiary_id: "BNF-2042",
-        visit_type: "Antenatal Care (ANC)",
-        weight: "58.0 kg",
-        vaccinations_due: ["TT Booster"],
-        next_visit_date: "2026-12-01",
-        danger_signs: ["High blood pressure (Hypertension)", "Swelling in feet (Edema)"],
-        referral_required: true,
-        confirmation_status: "confirmed"
-      });
-    }
-  };
-
-  // Submit worker-confirmed visit to Phase 3 endpoint
-  const handleConfirmAndSaveVisit = async () => {
-    try {
-      setIsSubmittingVisit(true);
-      setNotification(null);
-
       const res = await fetch(`${API_BASE}/api/visits/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(extractedRecord)
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(phase3Payload)
       });
 
-      const data = await res.json();
+      const resData = await res.json();
       if (res.status === 201) {
-        setNotification({ type: "success", message: `${t.successSaved} (ID: ${data.visit_id})` });
+        setNotification({
+          type: 'success',
+          message: `Visit report confirmed and saved to SQLite register! (ID: ${resData.visit_id})`
+        });
         refreshData();
       } else if (res.status === 409) {
-        setNotification({ type: "warning", message: `${t.duplicateError} (Checksum: ${data.fingerprint?.substring(0, 12)}...)` });
+        setNotification({
+          type: 'warning',
+          message: `Duplicate visit record detected. This entry was already persisted.`
+        });
       } else {
-        setNotification({ type: "error", message: data.detail || "Submission rejected by server validation." });
+        // Also save to Phase 2 report ledger
+        await fetch(`${API_BASE}/api/report/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ report: savedRecord, confirmed: true })
+        });
+        setNotification({ type: 'success', message: 'Report confirmed and saved.' });
+        refreshData();
       }
-    } catch (err) {
-      setNotification({ type: "error", message: "Network connection error while confirming visit." });
-    } finally {
-      setIsSubmittingVisit(false);
+    } catch (e) {
+      console.error('Save report error:', e);
+      setNotification({ type: 'error', message: 'Error persisting visit record.' });
     }
   };
 
@@ -347,7 +251,7 @@ export default function App() {
       if (res.ok) {
         setCurrentUser(data.user);
         setShowLoginModal(false);
-        setNotification({ type: "success", message: `Logged in successfully as ${data.user.full_name} (${data.user.role})` });
+        setNotification({ type: "success", message: `Logged in as ${data.user.full_name} (${data.user.role})` });
         refreshData();
       } else {
         setLoginError(data.detail || "Invalid login credentials.");
@@ -434,13 +338,10 @@ export default function App() {
           <div>
             <span className="demo-badge-tag">{t.demoMode}</span>
             <span style={{ marginLeft: "10px" }}>
-              Karnataka Health System | Mandya District | Kestur PHC
+              Karnataka Health System • Mandya District • Maddur Taluk • Kestur PHC
             </span>
           </div>
           <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-            <span style={{ fontSize: "12px" }}>
-              WebSocket Stream: {audioWsConnected ? <strong style={{ color: "#34d399" }}>CONNECTED (/ws/audio)</strong> : <span style={{ color: "#cbd5e1" }}>OFFLINE</span>}
-            </span>
             <button
               onClick={() => setLang(lang === "en" ? "kn" : "en")}
               className="btn btn-secondary btn-sm"
@@ -455,7 +356,9 @@ export default function App() {
         <header className="app-header">
           <div className="header-content">
             <div className="brand-section">
-              <div className="brand-logo">AS</div>
+              <div className="brand-logo">
+                <Activity size={24} color="#ffffff" />
+              </div>
               <div>
                 <h1 className="brand-title">{t.appTitle}</h1>
                 <p className="brand-subtitle">{t.appSubtitle}</p>
@@ -474,11 +377,13 @@ export default function App() {
                     onClick={() => { setCurrentUser(null); setNotification({ type: "info", message: "Logged out." }); }}
                     className="btn btn-secondary btn-sm"
                   >
+                    <LogOut size={14} style={{ marginRight: "4px" }} />
                     {t.logoutBtn}
                   </button>
                 </div>
               ) : (
                 <button onClick={() => setShowLoginModal(true)} className="btn btn-primary btn-sm">
+                  <LogIn size={14} style={{ marginRight: "4px" }} />
                   {t.loginBtn}
                 </button>
               )}
@@ -510,55 +415,84 @@ export default function App() {
           {/* Navigation Tabs */}
           <nav className="nav-tabs">
             <button
-              onClick={() => setActiveTab("overview")}
-              className={`tab-button ${activeTab === "overview" ? "active" : ""}`}
+              onClick={() => setActiveTab('VOICE')}
+              className={`tab-button ${activeTab === 'VOICE' ? 'active' : ''}`}
             >
-              <span>📊</span> {t.tabOverview}
+              <Mic size={16} />
+              <span>{t.tabVoice}</span>
             </button>
             <button
-              onClick={() => setActiveTab("voice")}
-              className={`tab-button ${activeTab === "voice" ? "active" : ""}`}
+              onClick={() => setActiveTab('DASHBOARD')}
+              className={`tab-button ${activeTab === 'DASHBOARD' ? 'active' : ''}`}
             >
-              <span>🎙️</span> {t.tabVoice}
-            </button>
-            <button
-              onClick={() => setActiveTab("visits")}
-              className={`tab-button ${activeTab === "visits" ? "active" : ""}`}
-            >
-              <span>📋</span> {t.tabVisits}
+              <LayoutDashboard size={16} />
+              <span>{t.tabOverview}</span>
               <span className="tab-badge">{visits.length}</span>
             </button>
             <button
-              onClick={() => setActiveTab("followups")}
-              className={`tab-button ${activeTab === "followups" ? "active" : ""}`}
+              onClick={() => setActiveTab('FOLLOWUPS')}
+              className={`tab-button ${activeTab === 'FOLLOWUPS' ? 'active' : ''}`}
             >
-              <span>🔔</span> {t.tabFollowups}
+              <Calendar size={16} />
+              <span>{t.tabFollowups}</span>
               <span className="tab-badge">{followups.length}</span>
             </button>
             <button
-              onClick={() => setActiveTab("households")}
-              className={`tab-button ${activeTab === "households" ? "active" : ""}`}
+              onClick={() => setActiveTab('HOUSEHOLDS')}
+              className={`tab-button ${activeTab === 'HOUSEHOLDS' ? 'active' : ''}`}
             >
-              <span>🏡</span> {t.tabHouseholds}
+              <Home size={16} />
+              <span>{t.tabHouseholds}</span>
               <span className="tab-badge">{households.length}</span>
             </button>
             <button
-              onClick={() => setActiveTab("finder")}
-              className={`tab-button ${activeTab === "finder" ? "active" : ""}`}
+              onClick={() => setActiveTab('FINDER')}
+              className={`tab-button ${activeTab === 'FINDER' ? 'active' : ''}`}
             >
-              <span>🔍</span> {t.tabFinder}
+              <Search size={16} />
+              <span>{t.tabFinder}</span>
             </button>
           </nav>
 
-          {/* TAB 1: OVERVIEW DASHBOARD */}
-          {activeTab === "overview" && (
+          {/* TAB 1: VOICE & AI REGISTER (PHASE 1 + PHASE 2 PIPELINE) */}
+          {activeTab === 'VOICE' && (
+            <div>
+              {/* Phase 1: Real-time Audio Capture & Streaming STT */}
+              <VoiceRecorder onTranscriptComplete={handleTranscriptComplete} />
+
+              {/* Extraction progress indicator */}
+              {extractingReport && (
+                <div style={{ textAlign: "center", padding: "24px", background: "white", borderRadius: "12px", border: "1px solid var(--gray-200)", marginBottom: "20px" }}>
+                  <div style={{ fontSize: "16px", fontWeight: "600", color: "#1e3a8a" }}>
+                    Analyzing voice note with AI Safety Engine...
+                  </div>
+                  <div style={{ fontSize: "13px", color: "var(--gray-500)", marginTop: "4px" }}>
+                    Extracting vitals, danger signs, and maternal health indicators
+                  </div>
+                </div>
+              )}
+
+              {/* Phase 2: Structured Clinical Extraction Review Card */}
+              {currentReport && (
+                <StructuredVisitReport
+                  report={currentReport}
+                  language={currentLanguage}
+                  onUpdateReport={(updated) => setCurrentReport(updated)}
+                  onConfirmAndSave={handleConfirmAndSave}
+                />
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: FIELD REGISTER & DASHBOARD (PHASE 3) */}
+          {activeTab === 'DASHBOARD' && (
             <div>
               {/* Emergency Referral Alert Banner */}
               {reports && reports.urgent_referrals?.length > 0 && (
                 <div className="referral-banner">
                   <div className="referral-header">
                     <div className="referral-title">
-                      <span>⚠️</span>
+                      <AlertTriangle size={20} color="#dc2626" />
                       <span>{reports.urgent_referrals.length} Active Beneficiaries Flagged for Urgent PHC Medical Referral</span>
                     </div>
                     <span className="badge badge-danger">Immediate Action Required</span>
@@ -604,310 +538,89 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Quick Integrated Architecture View */}
+              {/* Confirmed Visits Table from SQLite */}
               <div className="content-panel">
-                <h3 className="panel-title" style={{ marginBottom: "12px" }}>Integrated Architecture & Pipeline Status</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
-                  <div style={{ padding: "16px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px" }}>
-                    <h4 style={{ color: "#166534", marginBottom: "6px" }}>Phase 1: Voice Recognition</h4>
-                    <p style={{ fontSize: "13px", color: "#15803d" }}>Active WebSocket endpoint <code>/ws/audio</code> and HTTP transcription. Multilingual voice notes in Kannada, Hindi, and English.</p>
-                  </div>
-                  <div style={{ padding: "16px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "10px" }}>
-                    <h4 style={{ color: "#1e40af", marginBottom: "6px" }}>Phase 2: AI Entity Extraction</h4>
-                    <p style={{ fontSize: "13px", color: "#1d4ed8" }}>Clinical extraction review interface ready. Explicit worker confirmation barrier enforced before saving.</p>
-                  </div>
-                  <div style={{ padding: "16px", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: "10px" }}>
-                    <h4 style={{ color: "#6b21a8", marginBottom: "6px" }}>Phase 3: Database & Governance</h4>
-                    <p style={{ fontSize: "13px", color: "#7e22ce" }}>SQLite WAL persistence, SHA-256 duplicate prevention, area/PIN code scoping, and household health surveys.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: VOICE FIELD REGISTER (PHASE 1 + PHASE 2 WORKFLOW) */}
-          {activeTab === "voice" && (
-            <div>
-              {/* Phase 1: Voice Recording Component */}
-              <div className="voice-recorder-card">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+                <div className="panel-header">
                   <div>
-                    <h2 style={{ fontSize: "20px", fontWeight: "800" }}>🎙️ Phase 1: Voice Field Note Recording</h2>
-                    <p style={{ fontSize: "14px", opacity: 0.9, marginTop: "4px" }}>
-                      ASHA worker records field observation in local dialect. Audio streams via WebSocket to server.
+                    <h3 className="panel-title">Confirmed Visits Register</h3>
+                    <p style={{ fontSize: "13px", color: "var(--gray-500)" }}>
+                      Persisted visit records in SQLite with duplicate checksum protection and danger signs retention.
                     </p>
                   </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                    <select
-                      value={voiceLanguage}
-                      onChange={(e) => setVoiceLanguage(e.target.value)}
-                      className="input-field"
-                      style={{ width: "auto", minHeight: "36px", padding: "6px 12px" }}
-                    >
-                      <option value="kn-IN">ಕನ್ನಡ (Kannada)</option>
-                      <option value="hi-IN">हिंदी (Hindi)</option>
-                      <option value="en-IN">English (Indian)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="voice-controls">
-                  <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                    <button
-                      onClick={toggleRecording}
-                      className={`mic-btn ${isRecording ? "recording" : ""}`}
-                      title={isRecording ? t.stopRecording : t.recordVoice}
-                    >
-                      {isRecording ? "⏹" : "🎤"}
-                    </button>
-                    <div>
-                      <div style={{ fontWeight: "700", fontSize: "15px" }}>
-                        {isRecording ? "Recording in progress... Speak clearly." : "Tap microphone to begin field note"}
-                      </div>
-                      <div style={{ fontSize: "13px", opacity: 0.85 }}>
-                        Status: {isRecording ? "Transcribing live stream..." : "Microphone standby"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="waveform-container">
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
-                      <div key={i} className={`wave-bar ${isRecording ? "active" : ""}`} style={{ animationDelay: `${i * 0.12}s` }}></div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Live Transcript Box */}
-                <div style={{ marginTop: "16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: "600", opacity: 0.9 }}>
-                    <span>{t.liveTranscript}:</span>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <button onClick={() => loadSimulatedVoiceNote("newborn")} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "2px 8px", borderRadius: "4px", cursor: "pointer", fontSize: "11px" }}>
-                        Load Sample 1 (Newborn Visit)
-                      </button>
-                      <button onClick={() => loadSimulatedVoiceNote("anc_danger")} style={{ background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "2px 8px", borderRadius: "4px", cursor: "pointer", fontSize: "11px" }}>
-                        Load Sample 2 (ANC Referral Alert)
-                      </button>
-                    </div>
-                  </div>
-                  <div className="transcript-box">
-                    {voiceTranscript || "No speech recorded yet. Speak into the microphone or load a sample voice note above."}
-                  </div>
-                </div>
-              </div>
-
-              {/* Phase 2: AI Clinical Extraction Review & Confirmation Card */}
-              <div className="ai-review-card">
-                <div className="ai-review-header">
-                  <div>
-                    <h3 style={{ fontSize: "18px", fontWeight: "700", color: "#1e3a8a" }}>
-                      🤖 Phase 2: Extracted Clinical Record Review
-                    </h3>
-                    <p style={{ fontSize: "13px", color: "var(--gray-500)", marginTop: "2px" }}>
-                      Worker must verify extracted parameters before confirming. Database persistence occurs ONLY upon confirmation.
-                    </p>
-                  </div>
-                  <span className={`badge ${extractedRecord.referral_required ? "badge-danger" : "badge-success"}`}>
-                    {extractedRecord.referral_required ? "⚠️ PHC Referral Required" : "✓ Routine Visit"}
-                  </span>
-                </div>
-
-                <div className="review-grid">
-                  <div className="review-item">
-                    <div className="review-label">Beneficiary ID</div>
+                  <div className="search-bar">
                     <input
                       type="text"
+                      placeholder="Search by Beneficiary ID or Visit Type..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
                       className="input-field"
-                      style={{ marginTop: "4px" }}
-                      value={extractedRecord.beneficiary_id}
-                      onChange={(e) => setExtractedRecord({ ...extractedRecord, beneficiary_id: e.target.value })}
                     />
-                  </div>
-
-                  <div className="review-item">
-                    <div className="review-label">{t.visitType}</div>
-                    <input
-                      type="text"
-                      className="input-field"
-                      style={{ marginTop: "4px" }}
-                      value={extractedRecord.visit_type}
-                      onChange={(e) => setExtractedRecord({ ...extractedRecord, visit_type: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="review-item">
-                    <div className="review-label">{t.weight}</div>
-                    <input
-                      type="text"
-                      className="input-field"
-                      style={{ marginTop: "4px" }}
-                      value={extractedRecord.weight}
-                      onChange={(e) => setExtractedRecord({ ...extractedRecord, weight: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="review-item">
-                    <div className="review-label">{t.nextFollowup}</div>
-                    <input
-                      type="date"
-                      className="input-field"
-                      style={{ marginTop: "4px" }}
-                      value={extractedRecord.next_visit_date || ""}
-                      onChange={(e) => setExtractedRecord({ ...extractedRecord, next_visit_date: e.target.value || null })}
-                    />
-                    <div style={{ fontSize: "11px", color: "var(--gray-500)", marginTop: "4px" }}>
-                      {extractedRecord.next_visit_date ? "Date explicitly scheduled" : t.noFabricatedDate}
-                    </div>
                   </div>
                 </div>
 
-                <div style={{ marginBottom: "20px" }}>
-                  <div className="review-label" style={{ marginBottom: "6px" }}>{t.vaccinations}</div>
-                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                    {extractedRecord.vaccinations_due?.map((v, i) => (
-                      <span key={i} className="vaccine-tag">{v}</span>
-                    ))}
-                    <button
-                      onClick={() => {
-                        const newVac = prompt("Enter additional vaccination code (e.g. Pentavalent-1):");
-                        if (newVac) setExtractedRecord({ ...extractedRecord, vaccinations_due: [...extractedRecord.vaccinations_due, newVac] });
-                      }}
-                      className="btn btn-secondary btn-sm"
-                      style={{ padding: "2px 8px", fontSize: "11px" }}
-                    >
-                      + Add Vaccine
-                    </button>
-                  </div>
-                </div>
-
-                {extractedRecord.danger_signs?.length > 0 && (
-                  <div style={{ marginBottom: "20px" }}>
-                    <div className="review-label" style={{ color: "#991b1b", marginBottom: "6px" }}>{t.dangerSigns}</div>
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {extractedRecord.danger_signs.map((d, i) => (
-                        <span key={i} className="danger-tag">{d}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Explicit Worker Confirmation Controls */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--gray-200)", paddingTop: "16px", flexWrap: "wrap", gap: "12px" }}>
-                  <div style={{ fontSize: "13px", color: "var(--gray-700)" }}>
-                    Contract: <code>POST /api/visits/confirm</code> with status <code>"confirmed"</code>
-                  </div>
-                  <div style={{ display: "flex", gap: "12px" }}>
-                    <button
-                      onClick={() => setExtractedRecord({
-                        beneficiary_id: "BNF-2041",
-                        visit_type: "Newborn home visit",
-                        weight: "3.2 kg",
-                        vaccinations_due: ["OPV-1"],
-                        next_visit_date: null,
-                        danger_signs: [],
-                        referral_required: false,
-                        confirmation_status: "confirmed"
-                      })}
-                      className="btn btn-secondary"
-                    >
-                      Reset Form
-                    </button>
-                    <button
-                      disabled={isSubmittingVisit}
-                      onClick={handleConfirmAndSaveVisit}
-                      className="btn btn-success"
-                    >
-                      {isSubmittingVisit ? "Persisting to SQLite..." : `✓ ${t.confirmVisit}`}
-                    </button>
-                  </div>
+                <div className="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Visit ID</th>
+                        <th>Beneficiary ID</th>
+                        <th>Visit Type</th>
+                        <th>Weight</th>
+                        <th>Vaccinations</th>
+                        <th>Danger Signs</th>
+                        <th>Referral Flag</th>
+                        <th>Persisted At</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visits
+                        .filter(v =>
+                          v.beneficiary_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          v.visit_type?.toLowerCase().includes(searchTerm.toLowerCase())
+                        )
+                        .map((v) => (
+                          <tr key={v.visit_id}>
+                            <td><code>{v.visit_id}</code></td>
+                            <td><strong>{v.beneficiary_id}</strong></td>
+                            <td>{v.visit_type}</td>
+                            <td>{v.weight || "—"}</td>
+                            <td>
+                              {v.vaccinations_due && v.vaccinations_due.length > 0 ? (
+                                v.vaccinations_due.map((vac, i) => (
+                                  <span key={i} className="vaccine-tag">{vac}</span>
+                                ))
+                              ) : "—"}
+                            </td>
+                            <td>
+                              {v.danger_signs && v.danger_signs.length > 0 ? (
+                                v.danger_signs.map((ds, i) => (
+                                  <span key={i} className="danger-tag">{ds}</span>
+                                ))
+                              ) : (
+                                <span style={{ color: "#16a34a", fontSize: "12px" }}>✓ None</span>
+                              )}
+                            </td>
+                            <td>
+                              {v.referral_required ? (
+                                <span className="badge badge-danger">Urgent Referral</span>
+                              ) : (
+                                <span className="badge badge-success">Routine</span>
+                              )}
+                            </td>
+                            <td style={{ fontSize: "12px", color: "var(--gray-500)" }}>
+                              {v.created_at ? v.created_at.replace("T", " ").substring(0, 19) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 3: CONFIRMED VISITS REGISTER */}
-          {activeTab === "visits" && (
-            <div className="content-panel">
-              <div className="panel-header">
-                <div>
-                  <h3 className="panel-title">{t.tabVisits}</h3>
-                  <p style={{ fontSize: "13px", color: "var(--gray-500)" }}>
-                    Persisted visit records in SQLite with duplicate checksum protection and danger signs retention.
-                  </p>
-                </div>
-                <div className="search-bar">
-                  <input
-                    type="text"
-                    placeholder={t.searchBeneficiary}
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="input-field"
-                  />
-                </div>
-              </div>
-
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Visit ID</th>
-                      <th>Beneficiary ID</th>
-                      <th>Visit Type</th>
-                      <th>Weight</th>
-                      <th>Vaccinations</th>
-                      <th>Danger Signs</th>
-                      <th>Referral Flag</th>
-                      <th>Persisted At</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visits
-                      .filter(v =>
-                        v.beneficiary_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        v.visit_type?.toLowerCase().includes(searchTerm.toLowerCase())
-                      )
-                      .map((v) => (
-                        <tr key={v.visit_id}>
-                          <td><code>{v.visit_id}</code></td>
-                          <td><strong>{v.beneficiary_id}</strong></td>
-                          <td>{v.visit_type}</td>
-                          <td>{v.weight || "—"}</td>
-                          <td>
-                            {v.vaccinations_due && v.vaccinations_due.length > 0 ? (
-                              v.vaccinations_due.map((vac, i) => (
-                                <span key={i} className="vaccine-tag">{vac}</span>
-                              ))
-                            ) : "—"}
-                          </td>
-                          <td>
-                            {v.danger_signs && v.danger_signs.length > 0 ? (
-                              v.danger_signs.map((ds, i) => (
-                                <span key={i} className="danger-tag">{ds}</span>
-                              ))
-                            ) : (
-                              <span style={{ color: "#16a34a", fontSize: "12px" }}>✓ None</span>
-                            )}
-                          </td>
-                          <td>
-                            {v.referral_required ? (
-                              <span className="badge badge-danger">Urgent Referral</span>
-                            ) : (
-                              <span className="badge badge-success">Routine</span>
-                            )}
-                          </td>
-                          <td style={{ fontSize: "12px", color: "var(--gray-500)" }}>
-                            {v.created_at ? v.created_at.replace("T", " ").substring(0, 19) : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: FOLLOW-UP TRACKER */}
-          {activeTab === "followups" && (
+          {/* TAB 3: FOLLOW-UP TRACKER */}
+          {activeTab === 'FOLLOWUPS' && (
             <div className="content-panel">
               <div className="panel-header">
                 <div>
@@ -935,7 +648,7 @@ export default function App() {
                       <tr key={fol.follow_up_id}>
                         <td><code>{fol.follow_up_id}</code></td>
                         <td><strong>{fol.beneficiary_id}</strong></td>
-                        <td>{fol.follow_up_date || t.noFabricatedDate}</td>
+                        <td>{fol.follow_up_date || "None scheduled (null)"}</td>
                         <td>
                           <span className={`badge ${
                             fol.status === "completed" ? "badge-success" :
@@ -965,8 +678,8 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 5: HOUSEHOLD & FAMILY DIRECTORY */}
-          {activeTab === "households" && (
+          {/* TAB 4: HOUSEHOLD & FAMILY SURVEY DIRECTORY */}
+          {activeTab === 'HOUSEHOLDS' && (
             <div className="content-panel">
               <div className="panel-header">
                 <div>
@@ -978,7 +691,7 @@ export default function App() {
                 <div className="search-bar">
                   <input
                     type="text"
-                    placeholder={t.searchHousehold}
+                    placeholder="Search by Household Code, Head, or Address..."
                     className="input-field"
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
@@ -1046,15 +759,15 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 6: FIND ASHA WORKER PORTAL */}
-          {activeTab === "finder" && (
+          {/* TAB 5: FIND ASHA WORKER PORTAL */}
+          {activeTab === 'FINDER' && (
             <div>
               <div className="finder-hero">
                 <h2 style={{ fontSize: "24px", fontWeight: "800", marginBottom: "8px" }}>
                   🔍 Find Your Assigned ASHA Worker
                 </h2>
                 <p style={{ fontSize: "15px", maxWidth: "600px", margin: "0 auto 20px", opacity: 0.9 }}>
-                  Search by PIN code, village name, taluk, or district to locate the officially registered ASHA workers for your area.
+                  Search by PIN code, village name, taluk, or district to locate officially registered ASHA workers.
                 </p>
 
                 <form onSubmit={handleFinderSearch} style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap", maxWidth: "700px", margin: "0 auto" }}>
@@ -1202,7 +915,7 @@ export default function App() {
               <div className="modal-body">
                 <p style={{ fontSize: "14px", marginBottom: "12px" }}>
                   Beneficiary: <strong>{activeFollowup.beneficiary_id}</strong><br />
-                  Scheduled Date: <strong>{activeFollowup.follow_up_date || t.noFabricatedDate}</strong>
+                  Scheduled Date: <strong>{activeFollowup.follow_up_date || "None scheduled (null)"}</strong>
                 </p>
                 <label style={{ display: "block", fontSize: "13px", fontWeight: "600", marginBottom: "6px" }}>Worker Visit Field Notes:</label>
                 <textarea

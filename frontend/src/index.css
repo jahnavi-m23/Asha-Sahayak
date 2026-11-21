@@ -23,20 +23,37 @@
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  font-family: 'Plus Jakarta Sans', 'Noto Sans Kannada', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light;
+  color: #1e293b;
+  background-color: #f8fafc;
+  -webkit-font-smoothing: antialiased;
 }
 
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-  font-family: 'Plus Jakarta Sans', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: inherit;
 }
 
 body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
   background-color: var(--gray-50);
   color: var(--gray-900);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 100%;
+  min-height: 100vh;
 }
 
 .demo-banner {
@@ -468,12 +485,6 @@ tr:hover td {
   border: 1px solid #bfdbfe;
 }
 
-.badge-neutral {
-  background: var(--gray-100);
-  color: var(--gray-700);
-  border: 1px solid var(--gray-300);
-}
-
 .vaccine-tag {
   background: #ede9fe;
   color: #6d28d9;
@@ -533,94 +544,24 @@ tr:hover td {
   background: var(--gray-50);
 }
 
-pre.code-block {
-  background: #0f172a;
-  color: #38bdf8;
-  padding: 16px;
-  border-radius: var(--radius-md);
-  font-family: 'Consolas', 'Courier New', monospace;
-  font-size: 13px;
-  overflow-x: auto;
-  line-height: 1.5;
-}
-
-@media (max-width: 768px) {
-  .header-content {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .worker-info {
-    width: 100%;
-    justify-content: space-between;
-  }
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .search-bar {
-    max-width: 100%;
-  }
-}
-
-
-/* ==========================================================================
-   Phase 1: Voice Recognition UI & Waveform Animation
-   ========================================================================== */
-.voice-recorder-card {
-  background: linear-gradient(135deg, #1e3a8a 0%, #0f766e 100%);
-  color: white;
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  margin-bottom: 24px;
-  box-shadow: 0 10px 25px -5px rgba(30, 58, 138, 0.3);
-}
-
-.voice-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.mic-btn {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: #ffffff;
-  color: var(--primary);
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 24px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  transition: all 0.2s ease;
-  position: relative;
-}
-
-.mic-btn:hover {
-  transform: scale(1.06);
-}
-
-.mic-btn.recording {
-  background: var(--danger);
-  color: white;
-  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-}
-
+/* Animations */
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7);
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
   }
   70% {
-    box-shadow: 0 0 0 18px rgba(220, 38, 38, 0);
+    transform: scale(1.05);
+    box-shadow: 0 0 0 16px rgba(239, 68, 68, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
   }
+}
+
+.pulsing-mic {
+  animation: pulse-ring 1.8s infinite cubic-bezier(0.4, 0, 0.6, 1);
 }
 
 .waveform-container {
@@ -663,58 +604,6 @@ pre.code-block {
   line-height: 1.6;
 }
 
-/* ==========================================================================
-   Phase 2: AI Clinical Review & Confirmation Card
-   ========================================================================== */
-.ai-review-card {
-  background: #ffffff;
-  border: 2px solid #3b82f6;
-  border-radius: var(--radius-lg);
-  padding: 24px;
-  margin-bottom: 24px;
-  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.12);
-}
-
-.ai-review-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--gray-200);
-  margin-bottom: 20px;
-}
-
-.review-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.review-item {
-  background: var(--gray-50);
-  border: 1px solid var(--gray-200);
-  border-radius: var(--radius-md);
-  padding: 12px 16px;
-}
-
-.review-label {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--gray-500);
-  text-transform: uppercase;
-}
-
-.review-value {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--gray-900);
-  margin-top: 4px;
-}
-
-/* ==========================================================================
-   Phase 3: Finder Portal, Household Directory & Scoping Badges
-   ========================================================================== */
 .finder-hero {
   background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
   color: white;
@@ -771,13 +660,20 @@ pre.code-block {
   gap: 6px;
 }
 
-.member-chip {
-  background: #f8fafc;
-  border: 1px solid var(--gray-200);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .worker-info {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .search-bar {
+    max-width: 100%;
+  }
 }

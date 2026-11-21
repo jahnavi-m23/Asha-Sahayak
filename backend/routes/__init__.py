@@ -1,3 +1,8 @@
+"""API Routes package for ASHA Sahayak - Phase 1, Phase 2, and Phase 3."""
+
+from .voice import router as voice_router
+from .ai import router as ai_router
+from .report import router as report_router
 from .visits import router as visits_router
 from .beneficiaries import router as beneficiaries_router
 from .followups import router as followups_router
@@ -6,9 +11,11 @@ from .auth import router as auth_router
 from .areas import router as areas_router
 from .households import router as households_router, analytics_router
 from .workers import router as workers_router
-from .voice import router as voice_router
 
 __all__ = [
+    "voice_router",
+    "ai_router",
+    "report_router",
     "visits_router",
     "beneficiaries_router",
     "followups_router",
@@ -18,5 +25,4 @@ __all__ = [
     "households_router",
     "analytics_router",
     "workers_router",
-    "voice_router",
 ]
