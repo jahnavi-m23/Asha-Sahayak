@@ -5,6 +5,8 @@ from .reports import router as reports_router
 from .auth import router as auth_router
 from .areas import router as areas_router
 from .households import router as households_router, analytics_router
+from .workers import router as workers_router
+from .voice import router as voice_router
 
 __all__ = [
     "visits_router",
@@ -14,5 +16,7 @@ __all__ = [
     "auth_router",
     "areas_router",
     "households_router",
-    "analytics_router"
+    "analytics_router",
+    "workers_router",
+    "voice_router",
 ]

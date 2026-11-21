@@ -23,7 +23,10 @@ def list_beneficiaries(
     Supports real-time search by Beneficiary ID (e.g. BNF-2041).
     """
     try:
-        return get_beneficiaries(search=search, limit=limit)
+        lim = getattr(limit, "default", limit) if not isinstance(limit, int) else limit
+        if not isinstance(lim, int):
+            lim = 100
+        return get_beneficiaries(search=search, limit=lim)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

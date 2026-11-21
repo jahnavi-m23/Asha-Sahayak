@@ -17,8 +17,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from backend.main import app
 from backend.database.crud import init_db, seed_database_if_empty
+from tests.client_util import DirectTestClient
 
-client = TestClient(app)
+client = DirectTestClient(app)
 
 @pytest.fixture(autouse=True)
 def reset_db_before_tests():
