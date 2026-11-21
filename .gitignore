@@ -1,0 +1,33 @@
+# Environment variables and API secrets
+.env
+.env.*
+!.env.example
+
+# Python
+pycache/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Node.js and React
+node_modules/
+dist/
+build/
+
+# Local databases and user data
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE settings
+.idea/
+.vscode/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
