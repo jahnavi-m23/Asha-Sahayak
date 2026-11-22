@@ -24,6 +24,8 @@ import {
 
 // 10 Indian Languages documented by Gnani AI
 // Voices verified and active on Gnani Timbre v2.5
+const API_BASE = window.location.origin.includes(':5173') ? 'http://localhost:8000' : '';
+
 const TEN_INDIAN_LANGUAGES = [
   { code: 'kn-IN', name: 'Kannada (ಕನ್ನಡ)', phase2: 'kn', defaultVoice: 'Devika' },
   { code: 'hi-IN', name: 'Hindi (हिन्दी)', phase2: 'hi', defaultVoice: 'Nalini' },
@@ -58,6 +60,9 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
   const [showRawTranscript, setShowRawTranscript] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [handoffSuccess, setHandoffSuccess] = useState(false);
+  const [isSendingToPhase2, setIsSendingToPhase2] = useState(false);
+  const [phase2Error, setPhase2Error] = useState('');
+  const [sentRecordId, setSentRecordId] = useState('');
 
   // Text-To-Speech (TTS) & Multilingual Translation states - Gnani Timbre v2.5
   const [ttsLanguage, setTtsLanguage] = useState('kn-IN');
@@ -375,18 +380,52 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
   };
 
   const handleSendToPhase2 = async () => {
-    if (!phase2Payload) return;
+    if (!phase2Payload || isSendingToPhase2) return;
+    setIsSendingToPhase2(true);
+    setPhase2Error('');
     try {
-      const res = await fetch('http://localhost:8000/api/voice/to-phase2', {
+      let userToken = null;
+      let workerId = null;
+      try {
+        const savedSession = localStorage.getItem('asha_user_session');
+        if (savedSession) {
+          const user = JSON.parse(savedSession);
+          userToken = `token-${user.username}-${user.id}`;
+          workerId = user.id;
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      const payloadWithMeta = {
+        ...phase2Payload,
+        worker_id: workerId || phase2Payload.worker_id || null,
+        record_id: phase2Payload.record_id || `REC-${Date.now().toString(36).toUpperCase()}`
+      };
+
+      const res = await fetch(`${API_BASE}/api/voice/to-phase2`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(phase2Payload)
+        headers: {
+          'Content-Type': 'application/json',
+          ...(userToken ? { 'Authorization': `Bearer ${userToken}` } : {})
+        },
+        body: JSON.stringify(payloadWithMeta)
       });
-      if (res.ok) {
+      const data = await res.json();
+      if (res.ok && data.success) {
         setHandoffSuccess(true);
+        setSentRecordId(data.record_id || payloadWithMeta.record_id);
+        if (onTranscriptComplete) {
+          onTranscriptComplete(data.payload || payloadWithMeta, data.report, data.form_type, data.household_data);
+        }
+      } else {
+        setPhase2Error(data.detail || 'Failed to send transcript to Phase 2.');
       }
     } catch (err) {
       console.error('Failed to send to Phase 2 endpoint:', err);
+      setPhase2Error(err.message || 'Network error connecting to Phase 2 endpoint.');
+    } finally {
+      setIsSendingToPhase2(false);
     }
   };
 
@@ -406,7 +445,16 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
     setTtsError('');
     try {
       const source = srcLang || detectedLanguage || selectedLanguage || 'kn-IN';
-      const res = await fetch('http://localhost:8000/api/voice/translate', {
+      if (source === targetLang) {
+        setTranslatedText(text.trim());
+        setTranslationEngine('passthrough');
+        setTranslationUncertain(false);
+        setTranslationWarning('');
+        setIsTranslating(false);
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/api/voice/translate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -418,19 +466,27 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
       });
       if (res.ok) {
         const data = await res.json();
-        setTranslatedText(data.translated_text || text);
-        setTranslationEngine(data.engine_used || 'indic-translator');
-        setTranslationUncertain(Boolean(data.uncertain));
-        setTranslationWarning(data.review_warning || '');
-        console.log(`[ASHA Translation] Translated to ${targetLang} via ${data.engine_used}:`, data.translated_text);
+        if (data.success && data.translated_text) {
+          setTranslatedText(data.translated_text);
+          setTranslationEngine(data.engine_used || 'indic-translator');
+          setTranslationUncertain(Boolean(data.uncertain));
+          setTranslationWarning(data.review_warning || '');
+          console.log(`[ASHA Translation] Translated to ${targetLang} via ${data.engine_used}:`, data.translated_text);
+        } else {
+          setTranslatedText('');
+          setTranslationUncertain(true);
+          setTranslationWarning(data.error || data.review_warning || 'ಅನುವಾದ ವಿಫಲವಾಗಿದೆ / Translation could not be completed.');
+        }
       } else {
-        setTranslatedText(text);
+        setTranslatedText('');
         setTranslationUncertain(true);
-        setTranslationWarning('Translation service unavailable. Original text retained.');
+        setTranslationWarning('ಅನುವಾದ ಸೇವೆ ಲಭ್ಯವಿಲ್ಲ / Translation service unavailable.');
       }
     } catch (e) {
       console.warn('Translation request failed:', e);
-      setTranslatedText(text);
+      setTranslatedText('');
+      setTranslationUncertain(true);
+      setTranslationWarning('Translation service unavailable. Please check connection.');
     } finally {
       setIsTranslating(false);
     }
@@ -462,32 +518,44 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
     setTtsError('');
 
     try {
-      let textToSpeak = translatedText;
-      // If not yet translated to current ttsLanguage, translate now
-      if (!textToSpeak || textToSpeak.trim() === '') {
-        const transRes = await fetch('http://localhost:8000/api/voice/translate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            text: originalText.trim(),
-            source_language: detectedLanguage || 'kn-IN',
-            target_language: ttsLanguage
-          })
-        });
-        if (transRes.ok) {
-          const transData = await transRes.json();
-          textToSpeak = transData.translated_text || originalText;
-          setTranslatedText(textToSpeak);
-          setTranslationEngine(transData.engine_used || 'indic-translator');
-          setTranslationUncertain(Boolean(transData.uncertain));
-          setTranslationWarning(transData.review_warning || '');
+      const srcLang = detectedLanguage || (selectedLanguage !== 'indic-auto' ? selectedLanguage : 'kn-IN');
+      let textToSpeak = '';
+
+      if (ttsLanguage === srcLang) {
+        textToSpeak = originalText.trim();
+      } else {
+        // Must use translated text for foreign language
+        if (translatedText && translatedText.trim() && !translationWarning) {
+          textToSpeak = translatedText.trim();
         } else {
-          textToSpeak = originalText;
+          // Attempt translation now
+          const transRes = await fetch(`${API_BASE}/api/voice/translate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: originalText.trim(),
+              source_language: srcLang,
+              target_language: ttsLanguage
+            })
+          });
+          if (transRes.ok) {
+            const transData = await transRes.json();
+            if (transData.success && transData.translated_text) {
+              textToSpeak = transData.translated_text.trim();
+              setTranslatedText(textToSpeak);
+              setTranslationEngine(transData.engine_used || 'indic-translator');
+            }
+          }
+        }
+
+        if (!textToSpeak) {
+          const targetLangName = TEN_INDIAN_LANGUAGES.find((l) => l.code === ttsLanguage)?.name || ttsLanguage;
+          throw new Error(`Cannot play audio: Translation into ${targetLangName} is not available. Will not play original text under wrong language voice.`);
         }
       }
 
       const langConfig = TEN_INDIAN_LANGUAGES.find((l) => l.code === ttsLanguage) || TEN_INDIAN_LANGUAGES[0];
-      const res = await fetch('http://localhost:8000/api/voice/tts', {
+      const res = await fetch(`${API_BASE}/api/voice/tts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -969,8 +1037,16 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
                 <span style={{ color: '#64748b', fontStyle: 'italic' }}>
                   Translating transcript to {TEN_INDIAN_LANGUAGES.find((l) => l.code === ttsLanguage)?.name}...
                 </span>
+              ) : translatedText ? (
+                <span>{translatedText}</span>
+              ) : translationWarning ? (
+                <span style={{ color: '#dc2626', fontSize: '13px', fontStyle: 'italic' }}>
+                  {translationWarning}
+                </span>
               ) : (
-                translatedText || fullLiveText || (phase2Payload && phase2Payload.transcript)
+                <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>
+                  {ttsLanguage === (detectedLanguage || selectedLanguage || 'kn-IN') ? (fullLiveText || (phase2Payload && phase2Payload.transcript)) : 'Select Listen to translate and synthesize.'}
+                </span>
               )}
             </div>
             {translationUncertain && translationWarning && (
@@ -1045,18 +1121,34 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
 
           <pre style={styles.jsonPreview}>{JSON.stringify(phase2Payload, null, 2)}</pre>
 
+          {phase2Error && (
+            <div style={{ padding: '8px 12px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, color: '#dc2626', fontSize: 13, marginBottom: 10 }}>
+              ⚠️ {phase2Error}
+            </div>
+          )}
+
+          {handoffSuccess && sentRecordId && (
+            <div style={{ padding: '8px 12px', backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, color: '#16a34a', fontSize: 13, marginBottom: 10 }}>
+              ✅ Transcript successfully saved to database & transferred to Phase 2 (Record ID: <strong>{sentRecordId}</strong>).
+            </div>
+          )}
+
           <div style={styles.phase2Actions}>
             <button
               onClick={handleSendToPhase2}
+              disabled={isSendingToPhase2 || handoffSuccess}
               style={{
                 ...styles.sendButton,
-                backgroundColor: handoffSuccess ? '#16a34a' : '#0284c7'
+                backgroundColor: handoffSuccess ? '#16a34a' : (isSendingToPhase2 ? '#94a3b8' : '#0284c7'),
+                cursor: (isSendingToPhase2 || handoffSuccess) ? 'default' : 'pointer'
               }}
             >
               <Send size={16} style={{ marginRight: 6 }} />
-              {handoffSuccess
-                ? 'Phase 2 ಗೆ ಕಳುಹಿಸಲಾಗಿದೆ / Sent to Phase 2!'
-                : 'Phase 2 ಗೆ ಕಳುಹಿಸಿ / Send to Phase 2'}
+              {isSendingToPhase2
+                ? 'Phase 2 ಗೆ ವರ್ಗಾಯಿಸಲಾಗುತ್ತಿದೆ... / Sending...'
+                : (handoffSuccess
+                  ? 'Phase 2 ಗೆ ಕಳುಹಿಸಲಾಗಿದೆ / Sent to Phase 2!'
+                  : 'Phase 2 ಗೆ ಕಳುಹಿಸಿ / Send to Phase 2')}
             </button>
 
             <button
@@ -1072,6 +1164,8 @@ export default function VoiceRecorder({ onTranscriptComplete }) {
                 setTranslationUncertain(false);
                 setTranslationWarning('');
                 setHandoffSuccess(false);
+                setPhase2Error('');
+                setSentRecordId('');
                 if (audioElementRef.current) {
                   audioElementRef.current.pause();
                 }

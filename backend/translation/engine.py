@@ -495,10 +495,24 @@ class ASHAIndicTranslator:
             except Exception as e:
                 logger.error(f"[Neural NMT] Translation failed: {e}")
 
-        # Fallback if network or service unavailable
-        if not raw_translation:
-            raw_translation = pre_normalized_text
-            engine_label = "fallback-source-preserved"
+        # Check if translation succeeded
+        if not raw_translation or (source_canonical != target_canonical and raw_translation.strip() == pre_normalized_text.strip()):
+            logger.error(f"[Neural NMT] Translation failed for {source_canonical} -> {target_canonical}")
+            return {
+                "original_text": clean_text,
+                "translated_text": "",
+                "source_language": source_canonical,
+                "target_language": target_canonical,
+                "target_voice": target_voice,
+                "model": self.model_name,
+                "flores_source": source_flores,
+                "flores_target": target_flores,
+                "uncertain": True,
+                "review_warning": f"Translation from {source_canonical} to {target_canonical} could not be completed. Please check connection.",
+                "engine_used": "failed",
+                "success": False,
+                "error": "Translation service unavailable or returned untranslated text"
+            }
 
         # 5. Clinical Entity Guard: Post-translation verification
         guarded_text, is_uncertain, review_reasons = ClinicalEntityShield.verify_and_guard(
@@ -531,29 +545,60 @@ class ASHAIndicTranslator:
         }
 
     async def _neural_nmt_translate(self, text: str, source_iso: str, target_iso: str) -> Optional[str]:
-        """Translates sentence via direct neural machine translation with connection pooling and retries."""
-        sl = "auto" if source_iso == "auto" else source_iso
+        """Translates sentence via multi-endpoint neural machine translation with connection pooling and retries."""
+        # Auto-detect script if source is auto
+        if source_iso == "auto":
+            if bool(re.search(r"[\u0C80-\u0CFF]", text)):
+                sl = "kn"
+            elif bool(re.search(r"[\u0900-\u097F]", text)):
+                sl = "hi"
+            elif bool(re.search(r"[\u0B80-\u0BFF]", text)):
+                sl = "ta"
+            elif bool(re.search(r"[\u0C00-\u0C7F]", text)):
+                sl = "te"
+            elif bool(re.search(r"[\u0D00-\u0D7F]", text)):
+                sl = "ml"
+            elif bool(re.search(r"[\u0980-\u09FF]", text)):
+                sl = "bn"
+            elif bool(re.search(r"[\u0A80-\u0AFF]", text)):
+                sl = "gu"
+            elif bool(re.search(r"[\u0A00-\u0A7F]", text)):
+                sl = "pa"
+            else:
+                sl = "auto"
+        else:
+            sl = source_iso
+
         tl = target_iso
         encoded_query = urllib.parse.quote(text)
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={encoded_query}"
 
-        for attempt in range(2):
-            try:
-                client = await self.get_client()
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                        translated_chunks = [chunk[0] for chunk in data[0] if chunk and len(chunk) > 0 and chunk[0]]
-                        return "".join(translated_chunks)
-            except Exception as e:
-                logger.warning(f"[Neural NMT] Attempt {attempt+1} failed: {e}")
-                if attempt == 0:
-                    if self._client and not self._client.is_closed:
-                        await self._client.aclose()
-                        self._client = None
-                    import asyncio
-                    await asyncio.sleep(0.3)
+        endpoints = [
+            f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={sl}&tl={tl}&dt=t&q={encoded_query}",
+            f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl={sl}&tl={tl}&q={encoded_query}"
+        ]
+
+        for ep_url in endpoints:
+            for attempt in range(2):
+                try:
+                    client = await self.get_client()
+                    resp = await client.get(ep_url)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        # Format 1: [[["translated text", ...]]]
+                        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                            chunks = [chunk[0] for chunk in data[0] if chunk and len(chunk) > 0 and chunk[0]]
+                            if chunks:
+                                return "".join(chunks)
+                        # Format 2: ["translated text"] or [["translated text"]]
+                        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], str):
+                            return data[0]
+                except Exception as e:
+                    logger.warning(f"[Neural NMT] Attempt {attempt+1} on endpoint failed: {e}")
+                    if attempt == 0:
+                        if self._client and not self._client.is_closed:
+                            await self._client.aclose()
+                            self._client = None
+                        await asyncio.sleep(0.2)
         return None
 
     async def _indictrans2_endpoint_translate(self, text: str, source_flores: str, target_flores: str) -> Optional[str]:
@@ -594,3 +639,4 @@ class ASHAIndicTranslator:
 
 
 indic_translator = ASHAIndicTranslator()
+MultilingualTranslationEngine = ASHAIndicTranslator

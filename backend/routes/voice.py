@@ -2,9 +2,10 @@ import json
 import base64
 import asyncio
 import logging
+import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, status, Response
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, Header, status, Response
 from pydantic import BaseModel, Field
 
 from backend.voice.config import config, SUPPORTED_LANGUAGES, SPECIAL_STT_MODES
@@ -14,7 +15,10 @@ from backend.voice.mock_engine import MockTranscriptionEngine
 from backend.voice.gnani_tts_client import GnaniTimbreTTSClient
 from backend.voice.medical_vocabulary import MEDICAL_KEYTERMS_200, VERIFIED_FIND_AND_REPLACE
 from backend.extraction.engine import ASHAExtractionEngine
+from backend.extraction.household_extractor import HouseholdSurveyExtractor
 from backend.translation.engine import indic_translator, ASHAIndicTranslator
+from backend.database.crud import save_voice_record, get_voice_records, get_voice_record_by_id
+from backend.routes.auth import resolve_user_from_token
 
 logger = logging.getLogger("routes.voice")
 router = APIRouter(prefix="/api/voice", tags=["Voice Recognition & Synthesis"])
@@ -38,12 +42,18 @@ class Phase2TranscriptPayload(BaseModel):
     {
       "transcript": "The baby weight is 3.2 kg and OPV-1 is due.",
       "language": "kn-en",
-      "status": "completed"
+      "status": "completed",
+      "record_id": "REC-XXXXXXXX",
+      "worker_id": "USR-ASHA-RAMPUR",
+      "form_type": "AUTO"
     }
     """
     transcript: str = Field(..., description="Recognized speech text")
     language: str = Field(..., description="Language code: kn, hi, en, ta, te, ml, mr, bn, gu, pa, or kn-en/hi-en")
     status: str = Field(default="completed", description="Status of the voice input processing")
+    record_id: Optional[str] = Field(default=None, description="Persistent record ID across phases (e.g. REC-XXXXXXXX)")
+    worker_id: Optional[str] = Field(default=None, description="Logged-in ASHA worker ID")
+    form_type: Optional[str] = Field(default="AUTO", description="Target form type: 'AUTO', 'HOUSEHOLD', 'VISIT'")
 
 
 class TTSRequestPayload(BaseModel):
@@ -223,10 +233,11 @@ async def synthesize_speech(payload: TTSRequestPayload):
 
 
 @router.post("/to-phase2")
-async def send_to_phase2(payload: Phase2TranscriptPayload):
+async def send_to_phase2(payload: Phase2TranscriptPayload, authorization: Optional[str] = Header(None)):
     """
-    Receives finalized transcript, hands it over to Phase 2,
-    and runs the ASHAExtractionEngine to produce the structured report.
+    Receives finalized transcript, persists it to SQLite voice_records table,
+    hands it over to Phase 2, and runs automated extraction (clinical or household).
+    Maintains record ID consistency and prevents duplicates.
     """
     if not payload.transcript.strip():
         raise HTTPException(
@@ -234,20 +245,84 @@ async def send_to_phase2(payload: Phase2TranscriptPayload):
             detail="Transcript text cannot be empty."
         )
 
-    record = payload.model_dump()
-    extracted_report = ASHAExtractionEngine.extract_report(
-        raw_transcript=payload.transcript,
-        language_code=payload.language
-    )
-    record["extracted_report"] = extracted_report
-    completed_transcripts_history.append(record)
-    logger.info(f"Handoff to Phase 2 with extraction: {record.get('transcript')[:50]}...")
+    # Resolve worker from header if present
+    user = None
+    if authorization and isinstance(authorization, str):
+        clean_token = authorization.replace("Bearer ", "").strip()
+        user = resolve_user_from_token(clean_token)
+    worker_id = (user.get("id") if user else None) or payload.worker_id
+
+    # Intent classification
+    selected_form = payload.form_type or "AUTO"
+    if selected_form == "AUTO":
+        detected_intent = HouseholdSurveyExtractor.classify_intent(payload.transcript)
+        form_type = "HOUSEHOLD" if detected_intent == "HOUSEHOLD" else "VISIT"
+    else:
+        form_type = selected_form
+
+    record_id = payload.record_id or f"REC-{uuid.uuid4().hex[:8].upper()}"
+
+    household_data = None
+    extracted_report = None
+
+    if form_type == "HOUSEHOLD":
+        household_data = HouseholdSurveyExtractor.extract_household(
+            transcript=payload.transcript,
+            language_code=payload.language
+        )
+    else:
+        extracted_report = ASHAExtractionEngine.extract_report(
+            raw_transcript=payload.transcript,
+            language_code=payload.language
+        )
+        extracted_report["id"] = record_id
+
+    # Save to SQLite database
+    db_save_data = {
+        "record_id": record_id,
+        "transcript": payload.transcript,
+        "language": payload.language,
+        "form_type": form_type,
+        "worker_id": worker_id,
+        "status": payload.status or "completed",
+        "report": extracted_report,
+        "household_data": household_data,
+        "confidence_score": extracted_report.get("confidence_score", 1.0) if extracted_report else 1.0
+    }
+    db_res = save_voice_record(db_save_data, user=user)
+
+    completed_transcripts_history.append({
+        "id": record_id,
+        "transcript": payload.transcript,
+        "language": payload.language,
+        "form_type": form_type,
+        "worker_id": worker_id,
+        "report": extracted_report,
+        "household_data": household_data,
+        "saved_to_db": True
+    })
+
+    actual_record_id = (db_res.get("record") or {}).get("id") or record_id
+    actual_report = extracted_report or (db_res.get("record") or {}).get("structured_data")
 
     return {
         "success": True,
         "message": "Transcript successfully delivered and analyzed by Phase 2 pipeline.",
-        "payload": record,
-        "report": extracted_report
+        "record_id": actual_record_id,
+        "form_type": form_type,
+        "payload": payload.model_dump(),
+        "report": actual_report,
+        "household_data": household_data,
+        "database_record": db_res.get("record")
+    }
+
+
+@router.get("/records")
+async def get_saved_voice_records(worker_id: Optional[str] = Query(None), limit: int = Query(50)):
+    """Returns saved Phase 1 & Phase 2 voice records from the SQLite database."""
+    return {
+        "success": True,
+        "records": get_voice_records(worker_id=worker_id, limit=limit)
     }
 
 

@@ -151,19 +151,45 @@ CREATE TABLE IF NOT EXISTS beneficiaries (
 CREATE TABLE IF NOT EXISTS visits (
     visit_id TEXT PRIMARY KEY,
     beneficiary_id TEXT NOT NULL,
+    beneficiary_name TEXT,
+    age INTEGER,
     visit_type TEXT NOT NULL,
     weight TEXT,
+    blood_pressure TEXT,
+    gestational_age TEXT,
     vaccinations_due TEXT,
+    symptoms_reported TEXT,
+    negated_symptoms TEXT,
     next_visit_date TEXT,
     danger_signs TEXT,
     referral_required INTEGER NOT NULL DEFAULT 0,
     referral_facility TEXT,
     referral_status TEXT DEFAULT 'Not Required',
     confirmation_status TEXT NOT NULL,
+    raw_transcript TEXT,
+    worker_id TEXT,
     submission_hash TEXT UNIQUE,
     visit_date TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    FOREIGN KEY (beneficiary_id) REFERENCES beneficiaries (beneficiary_id) ON DELETE CASCADE
+    FOREIGN KEY (beneficiary_id) REFERENCES beneficiaries (beneficiary_id) ON DELETE CASCADE,
+    FOREIGN KEY (worker_id) REFERENCES users (id) ON DELETE SET NULL
+);
+
+-- Voice records table: persists audio transcriptions and extracted structured reports across Phase 1 & 2
+CREATE TABLE IF NOT EXISTS voice_records (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    worker_id TEXT,
+    form_type TEXT DEFAULT 'clinical_visit',
+    transcript TEXT NOT NULL,
+    language TEXT NOT NULL,
+    structured_data TEXT,
+    confidence_score REAL DEFAULT 1.0,
+    status TEXT DEFAULT 'completed',
+    submission_hash TEXT UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    FOREIGN KEY (worker_id) REFERENCES users (id) ON DELETE SET NULL
 );
 
 -- Follow-up management table (Preserved from Phase 3)
@@ -183,7 +209,6 @@ CREATE TABLE IF NOT EXISTS follow_ups (
     FOREIGN KEY (beneficiary_id) REFERENCES beneficiaries (beneficiary_id) ON DELETE CASCADE
 );
 
--- Indexes for performance and scoping
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_areas_pincode ON areas(pincode);
 CREATE INDEX IF NOT EXISTS idx_areas_village ON areas(village);
@@ -206,4 +231,10 @@ CREATE INDEX IF NOT EXISTS idx_visits_date ON visits(visit_date);
 CREATE INDEX IF NOT EXISTS idx_visits_referral ON visits(referral_required);
 CREATE INDEX IF NOT EXISTS idx_followups_beneficiary ON follow_ups(beneficiary_id);
 CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON follow_ups(scheduled_date);
+"""
+
+CREATE_MIGRATION_INDEXES_SQL = """
+CREATE INDEX IF NOT EXISTS idx_visits_worker ON visits(worker_id);
+CREATE INDEX IF NOT EXISTS idx_voice_records_worker ON voice_records(worker_id);
+CREATE INDEX IF NOT EXISTS idx_voice_records_created ON voice_records(created_at);
 """

@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import VoiceRecorder from './components/VoiceRecorder';
 import StructuredVisitReport from './components/StructuredVisitReport';
 import Phase3Dashboard from './components/Phase3Dashboard';
+import HouseholdRegistrationModal from './components/HouseholdRegistrationModal';
+import VoiceHouseholdCard from './components/VoiceHouseholdCard';
+import WorkerRegistrationModal from './components/WorkerRegistrationModal';
 import {
   Mic,
   LayoutDashboard,
@@ -19,7 +22,8 @@ import {
   PlusCircle,
   Eye,
   Trash2,
-  Edit2
+  Edit2,
+  UserPlus
 } from 'lucide-react';
 
 const API_BASE = window.location.port === "8000" ? "" : "http://localhost:8000";
@@ -76,23 +80,50 @@ export default function App() {
   // Navigation tab: 'VOICE' | 'DASHBOARD' | 'FOLLOWUPS' | 'HOUSEHOLDS' | 'FINDER'
   const [activeTab, setActiveTab] = useState('VOICE');
 
-  // Authenticated user session
-  const [currentUser, setCurrentUser] = useState({
-    id: "USR-ASHA-RAMPUR",
-    username: "asha_rampur",
-    role: "asha_worker",
-    full_name: "Sunita Devi",
-    badge_id: "ASHA-KA-MDY-001",
-    assigned_pincode: "571428",
-    assigned_village: "Rampur",
-    phc_name: "Kestur Primary Health Centre"
+  // Authenticated user session (Restored from localStorage, default null to prevent hardcoded identity)
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('asha_user_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
 
-  // Phase 1 & 2 Workflow State
+  // Keep localStorage session in sync
+  useEffect(() => {
+    if (currentUser) {
+      try {
+        localStorage.setItem('asha_user_session', JSON.stringify(currentUser));
+      } catch {}
+    } else {
+      localStorage.removeItem('asha_user_session');
+    }
+  }, [currentUser]);
+
+  // Phase 1 & 2 Workflow State (Restored from localStorage so records persist across refresh/re-login)
   const [completedHandoff, setCompletedHandoff] = useState(null);
-  const [currentReport, setCurrentReport] = useState(null);
+  const [currentReport, setCurrentReport] = useState(() => {
+    try {
+      const saved = localStorage.getItem('asha_current_report');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    if (currentReport) {
+      try {
+        localStorage.setItem('asha_current_report', JSON.stringify(currentReport));
+      } catch {}
+    }
+  }, [currentReport]);
+
   const [extractingReport, setExtractingReport] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState('kn-IN');
+  const [activeVoiceFormType, setActiveVoiceFormType] = useState('AUTO'); // 'AUTO' | 'HOUSEHOLD' | 'VISIT'
+  const [voiceHouseholdData, setVoiceHouseholdData] = useState(null);
 
   // Phase 3 Real Database State
   const [reports, setReports] = useState(null);
@@ -103,11 +134,21 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [notification, setNotification] = useState(null);
 
-  // Modals
+  // Modals & Registration
+  const [showAddHouseholdModal, setShowAddHouseholdModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [loginForm, setLoginForm] = useState({ username: "asha_rampur", password: "asha123" });
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState(null);
+
+  const DEMO_ACCOUNTS = [
+    { username: 'asha_rampur', label: 'Sunita Devi (ASHA Rampur, Mandya)', village: 'Rampur', pin: '571428', role: 'asha_worker' },
+    { username: 'asha_rampur_2', label: 'Radhika Gowda (ASHA Rampur Sector 2)', village: 'Rampur', pin: '571428', role: 'asha_worker' },
+    { username: 'asha_kalyanpur', label: 'Savitha Patil (ASHA Kalyanpur, Ramanagara)', village: 'Kalyanpur', pin: '562159', role: 'asha_worker' },
+    { username: 'supervisor_maddur', label: 'K. V. Manjula (Health Supervisor, Maddur)', village: 'Maddur', pin: '571428', role: 'health_supervisor' },
+    { username: 'admin', label: 'Dr. B. R. Ramesh (Chief Medical Officer / Admin)', village: 'Mandya HQ', pin: '571401', role: 'admin' },
+  ];
 
   const [showFollowupModal, setShowFollowupModal] = useState(false);
   const [activeFollowup, setActiveFollowup] = useState(null);
@@ -119,8 +160,8 @@ export default function App() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [householdToEdit, setHouseholdToEdit] = useState(null);
 
-  // Finder State
-  const [finderQuery, setFinderQuery] = useState({ pincode: "571428", village: "", taluk: "", district: "" });
+  // Finder State (Supports search by Name, Worker ID, Village, PIN code, and PHC)
+  const [finderQuery, setFinderQuery] = useState({ q: "", name: "", worker_id: "", phc_name: "", pincode: "", village: "" });
   const [finderResults, setFinderResults] = useState([]);
   const [finderLoading, setFinderLoading] = useState(false);
   const [finderMessage, setFinderMessage] = useState('');
@@ -155,9 +196,29 @@ export default function App() {
   }, [currentUser]);
 
   // Phase 1 -> Phase 2: When speech transcription is finalized
-  const handleTranscriptComplete = async (payload) => {
+  const handleTranscriptComplete = async (payload, preExtractedReport, formType, preExtractedHousehold) => {
     console.log('[App] Phase 1 Transcript Complete:', payload);
     setCompletedHandoff(payload);
+
+    if (formType === 'HOUSEHOLD' && preExtractedHousehold) {
+      setVoiceHouseholdData(preExtractedHousehold);
+      setActiveVoiceFormType('HOUSEHOLD');
+      setNotification({
+        type: 'success',
+        message: '🏠 Voice household survey detected & extracted! Review and verify details below.'
+      });
+      return;
+    }
+
+    if (preExtractedReport) {
+      setCurrentReport(preExtractedReport);
+      setActiveVoiceFormType('VISIT');
+      setNotification({
+        type: 'success',
+        message: '🩺 Clinical visit extraction complete. Please review before confirmation.'
+      });
+      return;
+    }
 
     if (payload.transcript && payload.transcript.trim()) {
       setExtractingReport(true);
@@ -165,7 +226,7 @@ export default function App() {
         const langCode = payload.language?.includes('kn') ? 'kn-IN' : (payload.language || 'kn-IN');
         setCurrentLanguage(langCode);
 
-        // Run Phase 2 AI clinical extraction
+        // Run Phase 2 AI extraction (Intent classified: Household Registration vs Clinical Visit)
         const response = await fetch(`${API_BASE}/api/report/extract`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -176,9 +237,22 @@ export default function App() {
         });
 
         const data = await response.json();
-        if (data.success && data.report) {
-          setCurrentReport(data.report);
-          setNotification({ type: 'success', message: 'Clinical extraction complete. Please review before confirmation.' });
+        if (data.success) {
+          if (data.form_type === 'HOUSEHOLD' && data.household_data) {
+            setVoiceHouseholdData(data.household_data);
+            setActiveVoiceFormType('HOUSEHOLD');
+            setNotification({
+              type: 'success',
+              message: '🏠 Voice household survey detected & extracted! Review and verify details below.'
+            });
+          } else if (data.report) {
+            setCurrentReport(data.report);
+            setActiveVoiceFormType('VISIT');
+            setNotification({
+              type: 'success',
+              message: '🩺 Clinical visit extraction complete. Please review before confirmation.'
+            });
+          }
         }
       } catch (err) {
         console.error('Error during automated report extraction:', err);
@@ -188,29 +262,79 @@ export default function App() {
     }
   };
 
+  // Phase 2 -> Phase 3: Worker confirms voice-filled household
+  const handleSaveHouseholdFromVoice = async (hhPayload) => {
+    try {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(currentUser ? { "Authorization": `Bearer token-${currentUser.username}-${currentUser.id}` } : {})
+      };
+      const res = await fetch(`${API_BASE}/api/households`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(hhPayload)
+      });
+      const resData = await res.json();
+      if (res.ok || res.status === 201) {
+        setNotification({
+          type: 'success',
+          message: `✅ Household ${resData.household_code || 'record'} registered and saved to directory!`
+        });
+        setVoiceHouseholdData(null);
+        refreshData();
+      } else if (res.status === 409) {
+        setNotification({
+          type: 'warning',
+          message: `Household with this code already exists in database.`
+        });
+      } else {
+        setNotification({
+          type: 'error',
+          message: resData.detail || 'Failed to save household.'
+        });
+      }
+    } catch (err) {
+      console.error("Save household error:", err);
+      setNotification({ type: 'error', message: 'Error saving household to database.' });
+    }
+  };
+
   // Phase 2 -> Phase 3: Worker confirms structured report
   const handleConfirmAndSave = async (savedRecord) => {
     try {
-      // 1. Format payload matching Phase 3 contract
+      const headers = {
+        "Content-Type": "application/json",
+        ...(currentUser ? { "Authorization": `Bearer token-${currentUser.username}-${currentUser.id}` } : {})
+      };
+
       const phase3Payload = {
-        beneficiary_id: savedRecord.beneficiary_id || "BNF-2041",
-        visit_type: savedRecord.visit_type || "Routine Home Visit",
-        weight: savedRecord.infant_weight || savedRecord.weight || "3.2 kg",
-        vaccinations_due: savedRecord.vaccinations_due || [],
+        beneficiary_id: savedRecord.beneficiary_id || null,
+        beneficiary_name: savedRecord.beneficiary_name || null,
+        age: savedRecord.age || savedRecord.beneficiary_age || null,
+        visit_type: savedRecord.visit_type || "Routine Field Visit",
+        weight: savedRecord.weight || savedRecord.infant_weight || null,
+        blood_pressure: savedRecord.blood_pressure || null,
+        gestational_age: savedRecord.gestational_age || null,
+        pregnancy_status: savedRecord.pregnancy_status || null,
+        vaccinations_due: savedRecord.vaccinations_due || savedRecord.immunization_details || [],
+        symptoms_reported: savedRecord.symptoms_reported || savedRecord.symptoms || [],
+        negated_symptoms: savedRecord.negated_symptoms || [],
         next_visit_date: savedRecord.next_visit_date && !savedRecord.next_visit_date.includes("None") ? savedRecord.next_visit_date : null,
         danger_signs: savedRecord.danger_signs || [],
         referral_required: Boolean(savedRecord.referral_required),
-        confirmation_status: "confirmed"
+        confirmation_status: "confirmed",
+        worker_id: currentUser?.id || null,
+        raw_transcript: savedRecord.raw_transcript || null
       };
 
       const res = await fetch(`${API_BASE}/api/visits/confirm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(phase3Payload)
       });
 
       const resData = await res.json();
-      if (res.status === 201) {
+      if (res.status === 201 || res.status === 200) {
         setNotification({
           type: 'success',
           message: `Visit report confirmed and saved to SQLite register! (ID: ${resData.visit_id})`
@@ -222,11 +346,10 @@ export default function App() {
           message: `Duplicate visit record detected. This entry was already persisted.`
         });
       } else {
-        // Also save to Phase 2 report ledger
         await fetch(`${API_BASE}/api/report/save`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ report: savedRecord, confirmed: true })
+          headers,
+          body: JSON.stringify({ report: phase3Payload, confirmed: true })
         });
         setNotification({ type: 'success', message: 'Report confirmed and saved.' });
         refreshData();
@@ -268,16 +391,20 @@ export default function App() {
       setFinderLoading(true);
       setFinderMessage("");
       const params = new URLSearchParams();
+      if (finderQuery.q) params.append("q", finderQuery.q);
+      if (finderQuery.name) params.append("name", finderQuery.name);
+      if (finderQuery.worker_id) params.append("worker_id", finderQuery.worker_id);
+      if (finderQuery.phc_name) params.append("phc_name", finderQuery.phc_name);
       if (finderQuery.pincode) params.append("pincode", finderQuery.pincode);
       if (finderQuery.village) params.append("village", finderQuery.village);
-      if (finderQuery.taluk) params.append("taluk", finderQuery.taluk);
-      if (finderQuery.district) params.append("district", finderQuery.district);
 
       const res = await fetch(`${API_BASE}/api/workers/find?${params.toString()}`);
       const data = await res.json();
       if (res.ok) {
         setFinderResults(data.workers || []);
-        setFinderMessage(data.message || "");
+        setFinderMessage(data.message || `Found ${(data.workers || []).length} registered ASHA worker(s).`);
+      } else {
+        setFinderMessage(data.detail || "Error querying worker directory.");
       }
     } catch (err) {
       setFinderMessage("Unable to reach worker directory service.");
@@ -365,27 +492,48 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
               {currentUser ? (
-                <div className="worker-info">
+                <div className="worker-info" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                   <span className="status-dot"></span>
                   <span>
-                    <strong>{currentUser.full_name}</strong> ({currentUser.role})
+                    <strong>{currentUser.full_name}</strong> ({currentUser.role === 'asha_worker' ? 'ASHA Worker' : currentUser.role})
                   </span>
-                  <span className="worker-badge-pill">{currentUser.badge_id || currentUser.assigned_pincode || "Field"}</span>
+                  <span className="worker-badge-pill">{currentUser.badge_id || currentUser.id}</span>
+                  {currentUser.assigned_village && (
+                    <span style={{ fontSize: "12px", color: "var(--gray-600)" }}>📍 {currentUser.assigned_village}</span>
+                  )}
                   <button
-                    onClick={() => { setCurrentUser(null); setNotification({ type: "info", message: "Logged out." }); }}
+                    onClick={() => {
+                      setCurrentUser(null);
+                      setNotification({ type: "info", message: "Logged out successfully." });
+                    }}
                     className="btn btn-secondary btn-sm"
+                    title="Log out of current worker account"
                   >
                     <LogOut size={14} style={{ marginRight: "4px" }} />
                     {t.logoutBtn}
                   </button>
                 </div>
               ) : (
-                <button onClick={() => setShowLoginModal(true)} className="btn btn-primary btn-sm">
-                  <LogIn size={14} style={{ marginRight: "4px" }} />
-                  {t.loginBtn}
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <button
+                    onClick={() => setShowRegisterModal(true)}
+                    className="btn btn-secondary btn-sm"
+                    style={{ borderColor: "#0284c7", color: "#0284c7", display: "flex", alignItems: "center", gap: "5px" }}
+                  >
+                    <UserPlus size={14} />
+                    <span>Register Worker</span>
+                  </button>
+                  <button
+                    onClick={() => setShowLoginModal(true)}
+                    className="btn btn-primary btn-sm"
+                    style={{ display: "flex", alignItems: "center", gap: "5px" }}
+                  >
+                    <LogIn size={14} />
+                    <span>{t.loginBtn}</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -464,16 +612,63 @@ export default function App() {
               {extractingReport && (
                 <div style={{ textAlign: "center", padding: "24px", background: "white", borderRadius: "12px", border: "1px solid var(--gray-200)", marginBottom: "20px" }}>
                   <div style={{ fontSize: "16px", fontWeight: "600", color: "#1e3a8a" }}>
-                    Analyzing voice note with AI Safety Engine...
+                    Analyzing voice note with AI Safety & Intent Engine...
                   </div>
                   <div style={{ fontSize: "13px", color: "var(--gray-500)", marginTop: "4px" }}>
-                    Extracting vitals, danger signs, and maternal health indicators
+                    Extracting structured healthcare records (Household Directory Survey or Clinical Health Visit)
                   </div>
                 </div>
               )}
 
-              {/* Phase 2: Structured Clinical Extraction Review Card */}
-              {currentReport && (
+              {/* Form Switcher Bar when records are available */}
+              {(voiceHouseholdData || currentReport) && (
+                <div style={{
+                  display: "flex",
+                  gap: "10px",
+                  marginBottom: "16px",
+                  background: "#f1f5f9",
+                  padding: "8px 12px",
+                  borderRadius: "8px",
+                  alignItems: "center",
+                  flexWrap: "wrap"
+                }}>
+                  <span style={{ fontSize: "12px", fontWeight: "600", color: "#475569" }}>
+                    Extracted Form View:
+                  </span>
+                  {voiceHouseholdData && (
+                    <button
+                      onClick={() => setActiveVoiceFormType('HOUSEHOLD')}
+                      className={`btn btn-sm ${activeVoiceFormType === 'HOUSEHOLD' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ padding: "5px 12px", fontSize: "12px" }}
+                    >
+                      🏠 Household Survey Form {voiceHouseholdData.head_of_family ? `(${voiceHouseholdData.head_of_family})` : ''}
+                    </button>
+                  )}
+                  {currentReport && (
+                    <button
+                      onClick={() => setActiveVoiceFormType('VISIT')}
+                      className={`btn btn-sm ${activeVoiceFormType === 'VISIT' ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ padding: "5px 12px", fontSize: "12px" }}
+                    >
+                      🩺 Clinical Visit Form {currentReport.beneficiary_id ? `(${currentReport.beneficiary_id})` : ''}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Voice Household Form Card */}
+              {activeVoiceFormType === 'HOUSEHOLD' && voiceHouseholdData && (
+                <VoiceHouseholdCard
+                  householdData={voiceHouseholdData}
+                  currentUser={currentUser}
+                  lang={lang}
+                  onConfirmAndSave={handleSaveHouseholdFromVoice}
+                  onCancel={() => setVoiceHouseholdData(null)}
+                />
+              )}
+
+              {/* Voice Clinical Visit Report Card */}
+              {(activeVoiceFormType === 'VISIT' || (!voiceHouseholdData && activeVoiceFormType === 'AUTO')) && currentReport && (
                 <StructuredVisitReport
                   report={currentReport}
                   language={currentLanguage}
@@ -685,16 +880,26 @@ export default function App() {
                 <div>
                   <h3 className="panel-title">{t.tabHouseholds}</h3>
                   <p style={{ fontSize: "13px", color: "var(--gray-500)" }}>
-                    Geo-scoped households with family member health profiling, edit, and safe deletion.
+                    Geo-scoped households with family member health profiling, registration, edit, and safe deletion.
                   </p>
                 </div>
-                <div className="search-bar">
-                  <input
-                    type="text"
-                    placeholder="Search by Household Code, Head, or Address..."
-                    className="input-field"
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
+                <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => setShowAddHouseholdModal(true)}
+                    className="btn btn-primary"
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                  >
+                    <PlusCircle size={16} />
+                    <span>+ Add Household</span>
+                  </button>
+                  <div className="search-bar">
+                    <input
+                      type="text"
+                      placeholder="Search by Household Code, Head, or Address..."
+                      className="input-field"
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -711,48 +916,56 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {households
-                      .filter(h =>
-                        h.household_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        h.head_of_family?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        h.village?.toLowerCase().includes(searchTerm.toLowerCase())
-                      )
-                      .map((h) => (
-                        <tr key={h.id}>
-                          <td><code>{h.household_code}</code></td>
-                          <td>
-                            <strong>{h.head_of_family}</strong>
-                            <div style={{ fontSize: "12px", color: "var(--gray-500)" }}>{h.address_line}</div>
-                          </td>
-                          <td>
-                            <div>{h.village}</div>
-                            <span className="scope-pill">PIN: {h.pincode}</span>
-                          </td>
-                          <td style={{ fontSize: "13px" }}>
-                            <div>House: {h.house_type}</div>
-                            <div>Water: {h.drinking_water_source} | Toilet: {h.toilet_facility ? "Yes" : "No"}</div>
-                          </td>
-                          <td>
-                            <span className="badge badge-info">{h.member_count || 3} members</span>
-                          </td>
-                          <td>
-                            <div style={{ display: "flex", gap: "6px" }}>
-                              <button
-                                onClick={() => { setHouseholdToEdit(h); setShowEditModal(true); }}
-                                className="btn btn-secondary btn-sm"
-                              >
-                                {t.edit}
-                              </button>
-                              <button
-                                onClick={() => { setHouseholdToDelete(h); setShowDeleteModal(true); }}
-                                className="btn btn-danger btn-sm"
-                              >
-                                {t.delete}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                    {households.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" style={{ textAlign: "center", padding: "32px", color: "var(--gray-500)" }}>
+                          No households registered for this area yet. Click <strong>+ Add Household</strong> above or register via Voice in Tab 1.
+                        </td>
+                      </tr>
+                    ) : (
+                      households
+                        .filter(h =>
+                          h.household_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          h.head_of_family?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          h.village?.toLowerCase().includes(searchTerm.toLowerCase())
+                        )
+                        .map((h) => (
+                          <tr key={h.id}>
+                            <td><code>{h.household_code}</code></td>
+                            <td>
+                              <strong>{h.head_of_family}</strong>
+                              <div style={{ fontSize: "12px", color: "var(--gray-500)" }}>{h.address || h.address_line}</div>
+                            </td>
+                            <td>
+                              <div>{h.village}</div>
+                              <span className="scope-pill">PIN: {h.pincode}</span>
+                            </td>
+                            <td style={{ fontSize: "13px" }}>
+                              <div>House: {h.house_type || "Pucca"}</div>
+                              <div>Water: {h.water_source || h.drinking_water_source || "Piped Tap"} | Toilet: {h.toilet_available || h.toilet_facility ? "Yes" : "No"}</div>
+                            </td>
+                            <td>
+                              <span className="badge badge-info">{h.member_count || (h.family_members?.length || 3)} members</span>
+                            </td>
+                            <td>
+                              <div style={{ display: "flex", gap: "6px" }}>
+                                <button
+                                  onClick={() => { setHouseholdToEdit(h); setShowEditModal(true); }}
+                                  className="btn btn-secondary btn-sm"
+                                >
+                                  {t.edit}
+                                </button>
+                                <button
+                                  onClick={() => { setHouseholdToDelete(h); setShowDeleteModal(true); }}
+                                  className="btn btn-danger btn-sm"
+                                >
+                                  {t.delete}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -767,28 +980,60 @@ export default function App() {
                   🔍 Find Your Assigned ASHA Worker
                 </h2>
                 <p style={{ fontSize: "15px", maxWidth: "600px", margin: "0 auto 20px", opacity: 0.9 }}>
-                  Search by PIN code, village name, taluk, or district to locate officially registered ASHA workers.
+                  Search by name, worker ID, village, PIN code, or PHC to locate officially registered ASHA workers across Karnataka.
                 </p>
 
-                <form onSubmit={handleFinderSearch} style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap", maxWidth: "700px", margin: "0 auto" }}>
+                <form onSubmit={handleFinderSearch} style={{ display: "flex", gap: "10px", justifyContent: "center", flexWrap: "wrap", maxWidth: "800px", margin: "0 auto" }}>
                   <input
                     type="text"
-                    placeholder="Enter Postal PIN code (e.g. 571428)"
-                    value={finderQuery.pincode}
-                    onChange={(e) => setFinderQuery({ ...finderQuery, pincode: e.target.value })}
+                    placeholder="Search by Name, Worker ID, or Keyword..."
+                    value={finderQuery.q}
+                    onChange={(e) => setFinderQuery({ ...finderQuery, q: e.target.value })}
                     className="input-field"
                     style={{ flex: 1, minWidth: "220px", background: "white" }}
                   />
                   <input
                     type="text"
-                    placeholder="Village Name (e.g. Rampur)"
+                    placeholder="PIN Code (e.g. 571428)"
+                    value={finderQuery.pincode}
+                    onChange={(e) => setFinderQuery({ ...finderQuery, pincode: e.target.value })}
+                    className="input-field"
+                    style={{ width: "130px", background: "white" }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Village (e.g. Rampur)"
                     value={finderQuery.village}
                     onChange={(e) => setFinderQuery({ ...finderQuery, village: e.target.value })}
                     className="input-field"
-                    style={{ flex: 1, minWidth: "180px", background: "white" }}
+                    style={{ width: "140px", background: "white" }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="PHC (e.g. Kestur)"
+                    value={finderQuery.phc_name}
+                    onChange={(e) => setFinderQuery({ ...finderQuery, phc_name: e.target.value })}
+                    className="input-field"
+                    style={{ width: "140px", background: "white" }}
                   />
                   <button type="submit" className="btn btn-primary" style={{ background: "#0d9488" }}>
-                    {finderLoading ? "Searching..." : "Search ASHA Directory"}
+                    {finderLoading ? "Searching..." : "Search"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFinderQuery({ q: "", name: "", worker_id: "", phc_name: "", pincode: "", village: "" });
+                      fetch(`${API_BASE}/api/workers/find`)
+                        .then(r => r.json())
+                        .then(d => {
+                          setFinderResults(d.workers || []);
+                          setFinderMessage(`Showing all ${(d.workers || []).length} registered ASHA workers in Karnataka.`);
+                        });
+                    }}
+                    className="btn btn-secondary"
+                    style={{ background: "white" }}
+                  >
+                    View All Workers
                   </button>
                 </form>
               </div>
@@ -807,23 +1052,29 @@ export default function App() {
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
                           <div>
                             <h3 style={{ fontSize: "17px", fontWeight: "700", color: "#1e3a8a" }}>{w.full_name}</h3>
-                            <span className="worker-badge-pill" style={{ marginTop: "4px" }}>Badge: {w.badge_id}</span>
+                            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "4px" }}>
+                              <span className="worker-badge-pill">Badge: {w.badge_id}</span>
+                              <span style={{ fontSize: "11px", background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>ID: {w.worker_id}</span>
+                            </div>
                           </div>
-                          <span className="badge badge-success">Official ASHA</span>
+                          <span className={`badge ${w.account_status === 'Active' ? 'badge-success' : 'badge-warning'}`}>
+                            {w.account_status || 'Active'}
+                          </span>
                         </div>
 
                         <div style={{ fontSize: "13px", color: "var(--gray-700)", lineHeight: 1.8 }}>
-                          <div><strong>Coverage Area:</strong> {w.area_name || w.village}</div>
+                          <div><strong>Coverage / Sector:</strong> {w.sector || w.area_name || w.village}</div>
                           <div><strong>Village:</strong> {w.village} | <strong>PIN:</strong> {w.pincode}</div>
-                          <div><strong>PHC:</strong> {w.phc_name}</div>
-                          <div><strong>Mobile:</strong> {w.mobile}</div>
+                          <div><strong>Taluk & District:</strong> {w.taluk || "Maddur"}, {w.district || "Mandya"}</div>
+                          <div><strong>Assigned PHC:</strong> {w.phc_name}</div>
+                          <div><strong>Mobile / Contact:</strong> {w.mobile || w.work_contact || "Available via PHC"}</div>
                         </div>
                       </div>
 
                       <div style={{ marginTop: "18px", borderTop: "1px solid var(--gray-200)", paddingTop: "14px" }}>
                         <button
                           onClick={() => {
-                            setLoginForm({ username: w.username, password: "asha123" });
+                            setLoginForm({ username: w.username || w.worker_id.toLowerCase().replace(/[^a-z0-9_]/g, '_'), password: "asha123" });
                             setShowLoginModal(true);
                           }}
                           className="btn btn-primary btn-sm"
@@ -836,7 +1087,7 @@ export default function App() {
                   ))
                 ) : (
                   <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "40px 20px", color: "var(--gray-500)" }}>
-                    Enter a PIN code (e.g. <code>571428</code> or <code>571434</code>) to view registered workers.
+                    Search by worker name, worker ID, village, PIN code (e.g. <code>571428</code> or <code>571434</code>), or click <strong>View All Workers</strong>.
                   </div>
                 )}
               </div>
@@ -888,11 +1139,43 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  <div style={{ fontSize: "12px", color: "var(--gray-500)", background: "#f8fafc", padding: "10px", borderRadius: "6px" }}>
-                    <strong>Demo Logins:</strong>
-                    <div>ASHA Rampur: <code>asha_rampur</code> / <code>asha123</code></div>
-                    <div>Administrator: <code>admin</code> / <code>admin123</code></div>
-                    <div>Supervisor: <code>supervisor_maddur</code> / <code>sup123</code></div>
+                  <div style={{ fontSize: "12px", color: "var(--gray-600)", background: "#f8fafc", padding: "10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                    <div style={{ fontWeight: "700", marginBottom: "6px", color: "#334155" }}>Quick Demo Accounts:</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                      {DEMO_ACCOUNTS.map((acc) => (
+                        <button
+                          key={acc.username}
+                          type="button"
+                          onClick={() => {
+                            setLoginForm({ username: acc.username, password: acc.role === 'admin' ? 'admin123' : acc.role === 'health_supervisor' ? 'sup123' : 'asha123' });
+                          }}
+                          style={{
+                            textAlign: "left",
+                            padding: "6px 8px",
+                            fontSize: "12px",
+                            background: loginForm.username === acc.username ? "#e0f2fe" : "#ffffff",
+                            border: `1px solid ${loginForm.username === acc.username ? "#0284c7" : "#cbd5e1"}`,
+                            borderRadius: "5px",
+                            cursor: "pointer"
+                          }}
+                        >
+                          <strong>{acc.label}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: "14px", textAlign: "center" }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLoginModal(false);
+                        setShowRegisterModal(true);
+                      }}
+                      style={{ background: "none", border: "none", color: "#0284c7", fontSize: "13px", fontWeight: "600", cursor: "pointer", textDecoration: "underline" }}
+                    >
+                      + Register as New ASHA Worker
+                    </button>
                   </div>
                 </div>
                 <div className="modal-footer">
@@ -903,6 +1186,21 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* MODAL: WORKER SELF-SERVICE REGISTRATION */}
+        <WorkerRegistrationModal
+          isOpen={showRegisterModal}
+          onClose={() => setShowRegisterModal(false)}
+          onSuccess={(newUser) => {
+            setCurrentUser(newUser);
+            setNotification({
+              type: "success",
+              message: `🎉 Registered & logged in as ${newUser.full_name} (${newUser.badge_id || newUser.id})!`
+            });
+            refreshData();
+          }}
+          lang={lang}
+        />
 
         {/* MODAL: COMPLETE FOLLOW-UP */}
         {showFollowupModal && activeFollowup && (
@@ -949,7 +1247,7 @@ export default function App() {
                 <div style={{ background: "#fef2f2", padding: "12px", borderRadius: "8px", marginTop: "12px", border: "1px solid #fca5a5" }}>
                   <div><strong>Code:</strong> {householdToDelete.household_code}</div>
                   <div><strong>Head of Family:</strong> {householdToDelete.head_of_family}</div>
-                  <div><strong>Address:</strong> {householdToDelete.address_line}</div>
+                  <div><strong>Address:</strong> {householdToDelete.address || householdToDelete.address_line}</div>
                 </div>
               </div>
               <div className="modal-footer">
@@ -974,7 +1272,7 @@ export default function App() {
                   <input
                     type="text"
                     className="input-field"
-                    value={householdToEdit.head_of_family}
+                    value={householdToEdit.head_of_family || ""}
                     onChange={(e) => setHouseholdToEdit({ ...householdToEdit, head_of_family: e.target.value })}
                   />
                 </div>
@@ -983,8 +1281,8 @@ export default function App() {
                   <input
                     type="text"
                     className="input-field"
-                    value={householdToEdit.address_line}
-                    onChange={(e) => setHouseholdToEdit({ ...householdToEdit, address_line: e.target.value })}
+                    value={householdToEdit.address || householdToEdit.address_line || ""}
+                    onChange={(e) => setHouseholdToEdit({ ...householdToEdit, address: e.target.value, address_line: e.target.value })}
                   />
                 </div>
                 <div style={{ marginBottom: "14px" }}>
@@ -1013,7 +1311,8 @@ export default function App() {
                       headers,
                       body: JSON.stringify({
                         head_of_family: householdToEdit.head_of_family,
-                        address_line: householdToEdit.address_line,
+                        address: householdToEdit.address || householdToEdit.address_line,
+                        address_line: householdToEdit.address || householdToEdit.address_line,
                         house_type: householdToEdit.house_type
                       })
                     });
@@ -1032,6 +1331,21 @@ export default function App() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* MODAL: HOUSEHOLD REGISTRATION (MANUAL + QUICK VOICE FILL) */}
+        {showAddHouseholdModal && (
+          <HouseholdRegistrationModal
+            isOpen={showAddHouseholdModal}
+            onClose={() => setShowAddHouseholdModal(false)}
+            currentUser={currentUser}
+            lang={lang}
+            onSuccess={() => {
+              setShowAddHouseholdModal(false);
+              setNotification({ type: "success", message: "✅ New household registered and added to directory!" });
+              refreshData();
+            }}
+          />
         )}
       </div>
     </div>

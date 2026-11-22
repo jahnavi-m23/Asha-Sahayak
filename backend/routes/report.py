@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.extraction.engine import ASHAExtractionEngine
+from backend.extraction.household_extractor import HouseholdExtractor
+from backend.database.crud import save_confirmed_visit, get_visits, DuplicateVisitError
 
 logger = logging.getLogger("routes.report")
 router = APIRouter(prefix="/api/report", tags=["Phase 2 Extraction & Phase 3 Register"])
@@ -78,15 +80,50 @@ async def extract_structured_report(payload: ExtractReportRequest):
         )
 
     try:
-        report = ASHAExtractionEngine.extract_report(
-            raw_transcript=clean_text,
-            language_code=payload.language
-        )
-        report["id"] = f"DRAFT-{uuid.uuid4().hex[:8].upper()}"
-        logger.info(f"[Phase 2 Extraction] Extracted visit report for '{report.get('beneficiary_name')}' (Confidence: {report.get('confidence_score')})")
+        is_household = HouseholdExtractor.is_household_intent(clean_text)
+        if is_household:
+            hh_data = HouseholdExtractor.extract_household(clean_text, payload.language)
+            visit_report = ASHAExtractionEngine.extract_report(
+                raw_transcript=clean_text,
+                language_code=payload.language
+            )
+            report = {
+                **visit_report,
+                "id": f"DRAFT-HH-{uuid.uuid4().hex[:8].upper()}",
+                "form_type": "HOUSEHOLD",
+                "household_data": hh_data,
+                "head_of_family": hh_data["head_of_family"],
+                "member_count": hh_data["member_count"],
+                "village": hh_data["village"],
+                "pincode": hh_data["pincode"],
+                "address": hh_data["address"],
+                "contact_number": hh_data["contact_number"],
+                "house_type": hh_data["house_type"],
+                "water_source": hh_data["water_source"],
+                "toilet_available": hh_data["toilet_available"],
+                "sanitation_facility": hh_data["sanitation_facility"],
+                "family_members": hh_data["family_members"],
+                "clarification_prompt": hh_data["clarification_prompt"],
+                "readback_kn": hh_data["readback_kn"],
+                "readback_en": hh_data["readback_en"],
+                "confidence_score": hh_data["confidence_score"]
+            }
+            logger.info(f"[Phase 2 Extraction] Extracted Household profile for '{hh_data.get('head_of_family')}'")
+        else:
+            report = ASHAExtractionEngine.extract_report(
+                raw_transcript=clean_text,
+                language_code=payload.language
+            )
+            report["id"] = f"DRAFT-{uuid.uuid4().hex[:8].upper()}"
+            report["form_type"] = "VISIT"
+            report["household_data"] = None
+            logger.info(f"[Phase 2 Extraction] Extracted visit report for '{report.get('beneficiary_name')}' (Confidence: {report.get('confidence_score')})")
+
         return {
             "success": True,
-            "report": report
+            "report": report,
+            "form_type": report.get("form_type", "VISIT"),
+            "household_data": report.get("household_data")
         }
     except Exception as e:
         logger.error(f"[Phase 2 Extraction Error] {e}")
@@ -127,7 +164,7 @@ async def correct_report_by_voice(payload: VoiceCorrectionRequest):
 async def save_confirmed_report(payload: SaveReportRequest):
     """
     Phase 3 Database Storage:
-    Saves ONLY confirmed reports to the official ASHA Field Visit Register.
+    Saves ONLY confirmed reports to the official ASHA Field Visit Register and SQLite database.
     Rejects unconfirmed or empty drafts.
     """
     if not payload.confirmed:
@@ -137,11 +174,41 @@ async def save_confirmed_report(payload: SaveReportRequest):
         )
 
     report = dict(payload.report)
-    if not report.get("id") or report.get("id", "").startswith("DRAFT-"):
-        report["id"] = f"VISIT-{uuid.uuid4().hex[:8].upper()}"
+    orig_id = report.get("id") or report.get("record_id")
+    if not orig_id or orig_id.startswith("DRAFT-"):
+        orig_id = f"VISIT-{uuid.uuid4().hex[:8].upper()}"
+    report["id"] = orig_id
 
     report["confirmed"] = True
     report["saved_at"] = datetime.datetime.now().isoformat()
+
+    # Save to SQLite visits table
+    try:
+        db_payload = {
+            "beneficiary_id": report.get("beneficiary_id"),
+            "beneficiary_name": report.get("beneficiary_name"),
+            "age": report.get("age"),
+            "visit_type": report.get("visit_type") or "Routine Field Visit",
+            "weight": report.get("infant_weight") or report.get("weight"),
+            "blood_pressure": report.get("blood_pressure"),
+            "gestational_age": report.get("gestational_age"),
+            "pregnancy_status": report.get("pregnancy_status"),
+            "vaccinations_due": report.get("vaccinations_due") or report.get("immunization_details") or [],
+            "symptoms_reported": report.get("symptoms_reported") or report.get("symptoms") or [],
+            "negated_symptoms": report.get("negated_symptoms") or [],
+            "next_visit_date": report.get("next_visit_date"),
+            "danger_signs": report.get("danger_signs") or [],
+            "referral_required": bool(report.get("referral_required")),
+            "confirmation_status": "confirmed",
+            "worker_id": report.get("worker_id"),
+            "raw_transcript": report.get("raw_transcript")
+        }
+        db_res = save_confirmed_visit(db_payload)
+        report["db_visit_id"] = db_res.get("visit_id")
+    except DuplicateVisitError:
+        logger.info(f"Report {report.get('id')} already persisted in visits table.")
+    except Exception as e:
+        logger.warning(f"Error persisting report to SQLite visits table: {e}")
 
     SAVED_FIELD_VISIT_REGISTER.append(report)
     logger.info(f"[Phase 3 Register] Successfully saved confirmed visit report {report['id']} for {report.get('beneficiary_name')}")
@@ -158,16 +225,29 @@ async def save_confirmed_report(payload: SaveReportRequest):
 async def get_all_reports():
     """
     Phase 3 Dashboard:
-    Returns all confirmed visit reports with aggregated community health indicators:
-    - Total visits
-    - High-risk referrals count
-    - Immunizations scheduled
-    - Follow-ups pending
+    Returns all confirmed visit reports with aggregated community health indicators
+    sourced from SQLite database visits and session cache.
     """
-    total = len(SAVED_FIELD_VISIT_REGISTER)
-    referrals = sum(1 for r in SAVED_FIELD_VISIT_REGISTER if r.get("referral_required"))
-    vaccinations_due_count = sum(len(r.get("vaccinations_due", [])) for r in SAVED_FIELD_VISIT_REGISTER)
-    followups_count = sum(1 for r in SAVED_FIELD_VISIT_REGISTER if r.get("next_visit_date"))
+    db_visits = get_visits(limit=200)
+    
+    # Map visit_id to id for backwards compatibility
+    for v in db_visits:
+        if "id" not in v or not v["id"]:
+            v["id"] = v.get("visit_id")
+
+    # Merge session records that may carry custom client IDs
+    seen_ids = {v.get("id") for v in db_visits if v.get("id")}
+    combined_records = list(db_visits)
+    for r in reversed(SAVED_FIELD_VISIT_REGISTER):
+        rid = r.get("id")
+        if rid and rid not in seen_ids:
+            combined_records.append(r)
+            seen_ids.add(rid)
+
+    total = max(len(combined_records), len(SAVED_FIELD_VISIT_REGISTER))
+    referrals = sum(1 for r in combined_records if r.get("referral_required"))
+    vaccinations_due_count = sum(len(r.get("vaccinations_due", [])) for r in combined_records)
+    followups_count = sum(1 for r in combined_records if r.get("next_visit_date"))
 
     return {
         "stats": {
@@ -176,7 +256,7 @@ async def get_all_reports():
             "immunizations_scheduled": vaccinations_due_count,
             "pending_followups": followups_count
         },
-        "records": list(reversed(SAVED_FIELD_VISIT_REGISTER))
+        "records": combined_records
     }
 
 

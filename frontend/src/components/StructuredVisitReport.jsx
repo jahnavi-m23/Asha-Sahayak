@@ -19,6 +19,8 @@ import {
   X
 } from 'lucide-react';
 
+const API_BASE = window.location.origin.includes(':5173') ? 'http://localhost:8000' : '';
+
 export default function StructuredVisitReport({
   report,
   onUpdateReport,
@@ -152,19 +154,43 @@ export default function StructuredVisitReport({
   // 3. Confirm & Save to Phase 3
   const handleSaveToRegister = async () => {
     try {
-      const response = await fetch('/api/report/save', {
+      let userToken = null;
+      let workerId = null;
+      try {
+        const savedSession = localStorage.getItem('asha_user_session');
+        if (savedSession) {
+          const user = JSON.parse(savedSession);
+          userToken = `token-${user.username}-${user.id}`;
+          workerId = user.id;
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(userToken ? { 'Authorization': `Bearer ${userToken}` } : {})
+      };
+
+      const payload = {
+        ...editableReport,
+        worker_id: workerId || editableReport.worker_id || null,
+        confirmation_status: 'confirmed'
+      };
+
+      const response = await fetch(`${API_BASE}/api/report/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
-          report: editableReport,
+          report: payload,
           confirmed: true
         })
       });
 
       const data = await response.json();
-      if (data.success) {
+      if (response.ok && data.success) {
         setSavedSuccess(true);
-        if (onConfirmAndSave) onConfirmAndSave(data.record);
+        if (onConfirmAndSave) onConfirmAndSave(data.record || payload);
       } else {
         alert('Failed to save report: ' + (data.detail || 'Unknown error'));
       }
@@ -330,6 +356,33 @@ export default function StructuredVisitReport({
             </div>
 
             <div style={styles.fieldItem}>
+              <label style={styles.label}>Beneficiary Age (ವಯಸ್ಸು):</label>
+              {isEditing ? (
+                <input
+                  type="number"
+                  value={editableReport.age ?? editableReport.beneficiary_age ?? ''}
+                  onChange={(e) => {
+                    const parsed = e.target.value ? parseInt(e.target.value, 10) : null;
+                    handleFieldChange('age', parsed);
+                    handleFieldChange('beneficiary_age', parsed);
+                  }}
+                  style={styles.input}
+                  placeholder="e.g. 24"
+                />
+              ) : (
+                <div style={styles.value}>
+                  {(editableReport.age || editableReport.beneficiary_age) ? (
+                    <span style={{ fontWeight: '600', color: '#0369a1' }}>
+                      {editableReport.age || editableReport.beneficiary_age} years (ವರ್ಷ)
+                    </span>
+                  ) : (
+                    <span style={styles.emptyVal}>Not Specified (ದಾಖಲಾಗಿಲ್ಲ)</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={styles.fieldItem}>
               <label style={styles.label}>Pregnancy Status (ಸ್ಥಿತಿ):</label>
               <div style={styles.value}>
                 {editableReport.pregnancy_status || (
@@ -348,19 +401,22 @@ export default function StructuredVisitReport({
           </div>
           <div style={styles.fieldGrid}>
             <div style={styles.fieldItem}>
-              <label style={styles.label}>Infant / Birth Weight (ತೂಕ):</label>
+              <label style={styles.label}>Weight (ತೂಕ):</label>
               {isEditing ? (
                 <input
                   type="text"
-                  value={editableReport.infant_weight || ''}
-                  onChange={(e) => handleFieldChange('infant_weight', e.target.value)}
+                  value={editableReport.weight || editableReport.infant_weight || ''}
+                  onChange={(e) => {
+                    handleFieldChange('weight', e.target.value);
+                    handleFieldChange('infant_weight', e.target.value);
+                  }}
                   style={styles.input}
                   placeholder="e.g. 2.8 kg"
                 />
               ) : (
                 <div style={styles.value}>
-                  {editableReport.infant_weight ? (
-                    <span style={styles.highlightBadge}>{editableReport.infant_weight}</span>
+                  {(editableReport.weight || editableReport.infant_weight) ? (
+                    <span style={styles.highlightBadge}>{editableReport.weight || editableReport.infant_weight}</span>
                   ) : (
                     <span style={styles.emptyVal}>Null (ದಾಖಲಾಗಿಲ್ಲ)</span>
                   )}
@@ -445,8 +501,8 @@ export default function StructuredVisitReport({
               Reported Symptoms (ವರದಿಯಾದ ರೋಗಲಕ್ಷಣಗಳು):
             </label>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {editableReport.symptoms_reported && editableReport.symptoms_reported.length > 0 ? (
-                editableReport.symptoms_reported.map((sym, i) => (
+              {(editableReport.symptoms_reported || editableReport.symptoms) && (editableReport.symptoms_reported || editableReport.symptoms).length > 0 ? (
+                (editableReport.symptoms_reported || editableReport.symptoms).map((sym, i) => (
                   <span key={i} style={styles.symptomPill}>
                     ⚠️ {sym}
                   </span>
@@ -487,8 +543,8 @@ export default function StructuredVisitReport({
               Vaccinations Due / Pending (ಬಾಕಿ ಇರುವ ಲಸಿಕೆಗಳು):
             </label>
             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {editableReport.vaccinations_due && editableReport.vaccinations_due.length > 0 ? (
-                editableReport.vaccinations_due.map((vax, i) => (
+              {(editableReport.vaccinations_due || editableReport.immunization_details) && (editableReport.vaccinations_due || editableReport.immunization_details).length > 0 ? (
+                (editableReport.vaccinations_due || editableReport.immunization_details).map((vax, i) => (
                   <span key={i} style={styles.vaxDuePill}>
                     💉 {vax} (Due)
                   </span>

@@ -59,6 +59,9 @@ class PasswordResetRequest(BaseModel):
 @router.get("/find", summary="Public location-based ASHA worker finder")
 def public_find_asha_workers(
     q: Optional[str] = None,
+    name: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    phc_name: Optional[str] = None,
     pincode: Optional[str] = None,
     village: Optional[str] = None,
     locality: Optional[str] = None,
@@ -69,11 +72,14 @@ def public_find_asha_workers(
 ):
     """
     Public lookup endpoint to find officially registered and verified ASHA workers
-    for any geographical location in Karnataka.
+    by name, worker ID, village, PIN code, PHC, or coordinates.
     Never exposes sensitive private information (passwords, home address, medical data).
     """
     workers = find_asha_workers(
         query=q,
+        name=name,
+        worker_id=worker_id,
+        phc_name=phc_name,
         pincode=pincode,
         village=village,
         locality=locality,
@@ -85,6 +91,9 @@ def public_find_asha_workers(
 
     query_summary = {
         "q": q,
+        "name": name,
+        "worker_id": worker_id,
+        "phc_name": phc_name,
         "pincode": pincode,
         "village": village,
         "locality": locality,

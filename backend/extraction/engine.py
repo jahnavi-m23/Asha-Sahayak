@@ -172,8 +172,9 @@ class ASHAExtractionEngine:
         # 1. Beneficiary ID
         ben_id = cls._extract_beneficiary_id(text)
 
-        # 2. Beneficiary Name
+        # 2. Beneficiary Name & Age
         name = cls._extract_beneficiary_name(text)
+        age = cls._extract_beneficiary_age(text)
 
         # 3. Visit Type
         visit_type = cls._extract_visit_type(text)
@@ -248,13 +249,18 @@ class ASHAExtractionEngine:
         report = {
             "beneficiary_id": ben_id,
             "beneficiary_name": name,
+            "age": age,
+            "beneficiary_age": age,
             "visit_type": visit_type,
             "pregnancy_status": pregnancy_status,
             "gestational_age": gestational_age,
+            "weight": weight,
             "infant_weight": weight,
             "blood_pressure": bp_value,
             "vaccinations_due": vax_due,
+            "immunization_details": vax_due,
             "vaccinations_given": vax_given,
+            "symptoms": symptoms_reported,
             "symptoms_reported": symptoms_reported,
             "negated_symptoms": negated_symptoms,
             "next_visit_date": next_visit,
@@ -310,6 +316,15 @@ class ASHAExtractionEngine:
             updated["beneficiary_name"] = new_name
             field_modified = "beneficiary_name"
             readback_confirm = f"Beneficiary name updated to {new_name}. ಫಲಾನುಭವಿಯ ಹೆಸರು {new_name} ಗೆ ನವೀಕರಿಸಲಾಗಿದೆ."
+
+        # Case 3b: Age correction
+        age_match = re.search(r"(?:age\s+is|age|ವಯಸ್ಸು)\s*[:=]?\s*(\d{1,2})", text, re.IGNORECASE)
+        if age_match:
+            new_age = int(age_match.group(1))
+            updated["age"] = new_age
+            updated["beneficiary_age"] = new_age
+            field_modified = "age"
+            readback_confirm = f"Beneficiary age updated to {new_age}. ವಯಸ್ಸು {new_age} ಕ್ಕೆ ನವೀಕರಿಸಲಾಗಿದೆ."
 
         # Case 4: Next Visit Date correction
         if any(w in text.lower() for w in ["next visit", "ಮುಂದಿನ ಭೇಟಿ", "follow up", "next week", "ವಾರ"]):
@@ -376,14 +391,33 @@ class ASHAExtractionEngine:
 
     @staticmethod
     def _extract_beneficiary_name(text: str) -> Optional[str]:
-        # Explicit phrasing: "Beneficiary Lakshmi", "ತಾಯಿ ಲಕ್ಷ್ಮಿ", "Mother Shanti"
-        m = re.search(r"(?:beneficiary|mother|patient|ತಾಯಿ|ಫಲಾನುಭವಿ|ಹೆಸರು)\s+([A-Za-z\u0C80-\u0CFF]+)", text, re.IGNORECASE)
-        if m:
-            raw_name = m.group(1).strip()
-            # Map Kannada script name to canonical English transliteration if present
-            return KANNADA_NAMES_MAP.get(raw_name, raw_name.capitalize())
+        # 1. Look for explicit patterns in English and Kannada
+        patterns = [
+            r"\b(?:smt\.?|mrs\.?|ms\.?|kumari|shri)\s+([A-Za-z\u0C80-\u0CFF]+)",
+            r"(?:beneficiary\s+name\s+is|beneficiary\s+name|beneficiary\s+is|beneficiary)\s*[:=]?\s*(?:(?:smt\.?|mrs\.?|ms\.?|kumari|shri)\s+)?([A-Za-z\u0C80-\u0CFF]+)",
+            r"(?:mother['’]?s\s+name\s+is|mother['’]?s\s+name|mother\s+is|mother)\s*[:=]?\s*(?:(?:smt\.?|mrs\.?|ms\.?|kumari|shri)\s+)?([A-Za-z\u0C80-\u0CFF]+)",
+            r"(?:patient\s+name\s+is|patient\s+name|patient\s+is|patient)\s*[:=]?\s*(?:(?:smt\.?|mrs\.?|ms\.?|kumari|shri)\s+)?([A-Za-z\u0C80-\u0CFF]+)",
+            r"(?:name\s+is|name)\s*[:=]?\s*(?:(?:smt\.?|mrs\.?|ms\.?|kumari|shri)\s+)?([A-Za-z\u0C80-\u0CFF]+)",
+            r"(?:ಫಲಾನುಭವಿಯ\s+ಹೆಸರು|ಫಲಾನುಭವಿ|ತಾಯಿಯ\s+ಹೆಸರು|ತಾಯಿ|ಮಗುವಿನ\s+ತಾಯಿ|ಗರ್ಭಿಣಿ|ರೋಗಿಯ\s+ಹೆಸರು|ಹೆಸರು)\s*[:=]?\s*(?:(?:ಶ್ರೀಮತಿ|ಕುಮಾರಿ)\s+)?([A-Za-z\u0C80-\u0CFF]+)",
+        ]
+        
+        for pat in patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                raw_name = m.group(1).strip()
+                # Clean vibhakti endings
+                raw_name = re.sub(r"(?:ಯವರಿಗೆ|ಅವರಿಗೆ|ರವರು|ಯವರ|ರಿಗೆ|ಗೆ|ಯಿಂದ|'s)$", "", raw_name)
+                # Check Kannada map
+                if raw_name in KANNADA_NAMES_MAP:
+                    return KANNADA_NAMES_MAP[raw_name]
+                for kn_base, en_base in KANNADA_NAMES_MAP.items():
+                    if kn_base in raw_name:
+                        return en_base
+                # Avoid capturing stop words and titles
+                if raw_name.lower() not in ("smt", "mrs", "ms", "kumari", "shri", "age", "weight", "visit", "is", "was", "the", "a", "an", "and", "bp", "ಫಲಾನುಭವಿ", "ಹೆಸರು"):
+                    return raw_name.capitalize()
 
-        # Check dictionary of common names
+        # 2. Check dictionary of common names
         for kn_name, en_name in KANNADA_NAMES_MAP.items():
             if kn_name in text:
                 return en_name
@@ -392,6 +426,39 @@ class ASHAExtractionEngine:
             if re.search(rf"\b{name}\b", text, re.IGNORECASE):
                 return name
 
+        return None
+
+    @staticmethod
+    def _extract_beneficiary_age(text: str) -> Optional[int]:
+        """Extracts beneficiary age (12-95 years) avoiding confusion with gestational weeks/months."""
+        explicit_patterns = [
+            r"(?:beneficiary\s+age(?:\s+is)?|age(?:\s+is)?|age\s*[:=])\s*(\d{1,2})\s*(?:years?|yrs?|ವರ್ಷ)?\b",
+            r"(?:ವಯಸ್ಸು(?:\s*[:=]|ಯು)?)\s*(\d{1,2})\s*(?:ವರ್ಷ|years?|yrs?)?\b",
+            r"\b(\d{1,2})\s*(?:years?\s+old|year\s+old|ವರ್ಷದ\s*ವಯಸ್ಸು|ವರ್ಷ\s*ವಯಸ್ಸು)\b",
+        ]
+        for pat in explicit_patterns:
+            m = re.search(pat, text, re.IGNORECASE)
+            if m:
+                try:
+                    val = int(m.group(1))
+                    if 12 <= val <= 95:
+                        return val
+                except ValueError:
+                    pass
+
+        # Suffix with "years" or "ವರ್ಷ" if not immediately preceded/followed by gestational terms
+        for m in re.finditer(r"\b(\d{1,2})\s*(?:ವರ್ಷ|years?|yrs?)\b", text, re.IGNORECASE):
+            start = max(0, m.start() - 6)
+            end = min(len(text), m.end() + 6)
+            surrounding = text[start:end].lower()
+            if any(w in surrounding for w in ["week", "ವಾರ", "month", "ತಿಂಗಳು", "kg", "ಕೆಜಿ"]):
+                continue
+            try:
+                val = int(m.group(1))
+                if 12 <= val <= 95:
+                    return val
+            except ValueError:
+                pass
         return None
 
     @staticmethod
@@ -684,13 +751,18 @@ class ASHAExtractionEngine:
         return {
             "beneficiary_id": None,
             "beneficiary_name": None,
+            "age": None,
+            "beneficiary_age": None,
             "visit_type": "Unspecified Field Visit",
             "pregnancy_status": None,
             "gestational_age": None,
+            "weight": None,
             "infant_weight": None,
             "blood_pressure": None,
             "vaccinations_due": [],
+            "immunization_details": [],
             "vaccinations_given": [],
+            "symptoms": [],
             "symptoms_reported": [],
             "negated_symptoms": [],
             "next_visit_date": None,

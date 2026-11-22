@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field
 from backend.database.crud import (
     authenticate_user,
     get_user_by_id,
-    get_all_users
+    get_all_users,
+    register_worker_self_service,
+    ValidationError
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
@@ -20,6 +22,20 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 class LoginRequest(BaseModel):
     username: str = Field(..., description="Login ID / Username e.g. asha_rampur, admin")
     password: str = Field(..., description="User password")
+
+class RegisterRequest(BaseModel):
+    full_name: str = Field(..., min_length=2, description="Full Name of the ASHA worker")
+    username: str = Field(..., min_length=3, description="Unique login identifier")
+    password: Optional[str] = Field("asha123", description="Password")
+    mobile: Optional[str] = Field(None, description="Mobile contact number")
+    village: Optional[str] = Field("Rampur", description="Assigned village")
+    pincode: Optional[str] = Field("571428", description="6-digit postal PIN code")
+    taluk: Optional[str] = Field("Maddur", description="Taluk name")
+    district: Optional[str] = Field("Mandya", description="District name")
+    state: Optional[str] = Field("Karnataka", description="State name")
+    phc_name: Optional[str] = Field("Primary Health Centre", description="Assigned PHC")
+    sector: Optional[str] = Field(None, description="Assigned sector/ward")
+    badge_id: Optional[str] = Field(None, description="Official badge ID")
 
 class ForgotPasswordRequest(BaseModel):
     username: str = Field(..., description="Registered username")
@@ -71,13 +87,9 @@ def resolve_user_from_token(token: str) -> Optional[Dict[str, Any]]:
 def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     """
     Dependency that resolves authenticated user from Authorization header.
-    Gracefully handles tokens and ensures session stability across server restarts.
+    Requires a valid token and does not default to any single hardcoded user.
     """
     if not authorization:
-        # Default fallback to ASHA Rampur for seamless field operation
-        user = get_user_by_id("USR-ASHA-RAMPUR")
-        if user:
-            return user
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please log in."
@@ -88,15 +100,38 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
     if user:
         return user
 
-    # Fallback if token was corrupted
-    fallback_user = get_user_by_id("USR-ASHA-RAMPUR")
-    if fallback_user:
-        return fallback_user
-
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired session. Please log in again."
     )
+
+def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[Dict[str, Any]]:
+    """Resolves authenticated user if valid token present, otherwise None."""
+    if not authorization:
+        return None
+    clean_token = authorization.replace("Bearer ", "").strip()
+    return resolve_user_from_token(clean_token)
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register(reg_in: RegisterRequest):
+    """
+    Self-service registration for new ASHA workers.
+    Persists to SQLite database, creates area mapping, and returns authenticated session.
+    """
+    try:
+        user_obj = register_worker_self_service(reg_in.model_dump())
+        session_token = f"token-{user_obj['username']}-{user_obj['id']}"
+        ACTIVE_SESSIONS[session_token] = user_obj["id"]
+        return {
+            "status": "success",
+            "message": f"ASHA Worker {user_obj['full_name']} registered successfully.",
+            "access_token": session_token,
+            "user": user_obj
+        }
+    except ValidationError as ve:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Registration failed: {str(e)}")
 
 @router.post("/login")
 def login(login_in: LoginRequest):
@@ -125,7 +160,7 @@ def login(login_in: LoginRequest):
 @router.get("/me")
 def get_current_profile(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Returns the authenticated user's profile and assigned geographical area."""
-    return current_user
+    return {"status": "success", "user": current_user, **current_user}
 
 @router.post("/forgot-password")
 def forgot_password(req: ForgotPasswordRequest):

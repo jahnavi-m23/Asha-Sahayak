@@ -7,7 +7,7 @@ Area Scoping, and Dashboard Analytics.
 from typing import List, Optional, Dict, Any, Union
 from datetime import date
 from fastapi import APIRouter, HTTPException, Depends, Query, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.database.crud import (
     get_households,
@@ -25,8 +25,13 @@ from backend.database.crud import (
     UnauthorizedAccessError
 )
 from backend.routes.auth import get_current_user
+from backend.extraction.household_extractor import HouseholdExtractor
 
 router = APIRouter(prefix="/api/households", tags=["Households & Family Survey"])
+
+class VoiceExtractRequest(BaseModel):
+    transcript: str = Field(..., min_length=1, description="Spoken household narrative")
+    language: str = Field(default="kn-IN", description="Spoken language code")
 
 # Member Health Data Schema
 class FamilyMemberSchema(BaseModel):
@@ -58,6 +63,21 @@ class FamilyMemberSchema(BaseModel):
     nutritional_status: Optional[str] = Field("Normal", description="Normal, MAM, or SAM")
     special_needs: Optional[str] = Field(None, description="Special healthcare assistance required")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_member_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Normalize full name aliases
+            if "name" in data and "full_name" not in data:
+                data["full_name"] = data["name"]
+            # Normalize relationship aliases
+            if "relation" in data and "relationship" not in data:
+                data["relationship"] = data["relation"]
+            # Normalize health flags aliases
+            if "health_flags" in data and "special_needs" not in data:
+                data["special_needs"] = data["health_flags"]
+        return data
+
     @field_validator("age", mode="before")
     @classmethod
     def sanitize_age(cls, v: Any) -> int:
@@ -77,20 +97,29 @@ class FamilyMemberSchema(BaseModel):
 
 # Household Registration Schema
 class HouseholdRegistrationSchema(BaseModel):
+    household_code: Optional[str] = Field(None, description="Custom or auto-generated household code")
     area_id: Optional[str] = Field(None, description="Assigned geographical area ID")
     head_of_family: str = Field(..., description="Full name of family head")
+    member_count: Optional[int] = Field(None, description="Total members in household")
     address: str = Field(..., description="Complete residential address")
     pincode: str = Field(..., description="6-digit PIN code")
     village: str = Field(..., description="Village or Locality")
     contact_number: Optional[str] = Field(None, description="Primary contact number")
     house_type: str = Field("Pucca", description="Pucca, Semi-Pucca, Kutcha")
     water_source: str = Field("Piped Water / Tap", description="Primary drinking water source")
-    toilet_available: str = Field("Individual Household Latrine (IHHL)", description="Toilet facility")
+    toilet_available: Union[str, bool] = Field("Individual Household Latrine (IHHL)", description="Toilet facility")
     sanitation_facility: str = Field("Closed Drainage", description="Drainage / sanitation type")
     survey_status: str = Field("completed", description="Survey status: 'draft' or 'completed'")
     survey_date: Optional[str] = Field(None, description="Date of survey YYYY-MM-DD")
     remarks: Optional[str] = Field(None, description="Surveyor field remarks")
     family_members: List[FamilyMemberSchema] = Field(default_factory=list, description="Family members list")
+
+    @field_validator("toilet_available", mode="before")
+    @classmethod
+    def sanitize_toilet(cls, v: Any) -> str:
+        if isinstance(v, bool):
+            return "Individual Household Latrine (IHHL)" if v else "None"
+        return str(v) if v else "Individual Household Latrine (IHHL)"
 
     @field_validator("head_of_family", "address", mode="before")
     @classmethod
@@ -168,6 +197,24 @@ def create_household(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to register household survey: {str(e)}"
+        )
+
+@router.post("/voice-extract")
+def extract_household_from_voice(payload: VoiceExtractRequest):
+    """
+    Extracts structured household and family member details from speech transcript.
+    Used for automated voice-driven household form filling.
+    """
+    try:
+        extracted = HouseholdExtractor.extract_household(payload.transcript, payload.language)
+        return {
+            "success": True,
+            "household": extracted
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Voice household extraction failed: {str(e)}"
         )
 
 @router.get("/{household_id}")

@@ -12,7 +12,7 @@ from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple
 
 from .connection import get_db
-from .models import CREATE_TABLES_SQL
+from .models import CREATE_TABLES_SQL, CREATE_MIGRATION_INDEXES_SQL
 from .seed_data import get_enhanced_seed_data, verify_password, hash_password
 from .validators import validate_confirmed_visit_payload
 
@@ -55,12 +55,24 @@ def init_db():
             ("areas", "latitude REAL"),
             ("areas", "longitude REAL"),
             ("areas", "updated_at TEXT"),
+            ("visits", "beneficiary_name TEXT"),
+            ("visits", "age INTEGER"),
+            ("visits", "blood_pressure TEXT"),
+            ("visits", "gestational_age TEXT"),
+            ("visits", "symptoms_reported TEXT"),
+            ("visits", "negated_symptoms TEXT"),
+            ("visits", "raw_transcript TEXT"),
+            ("visits", "worker_id TEXT"),
         ]
         for tbl, col_def in alter_columns:
             try:
                 conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col_def}")
             except Exception:
                 pass
+        try:
+            conn.executescript(CREATE_MIGRATION_INDEXES_SQL)
+        except Exception:
+            pass
 
 def seed_database_if_empty(force: bool = False):
     """
@@ -394,12 +406,12 @@ def get_households(
         """
         params = []
 
-        # Role-based restriction: ASHA worker only sees her assigned area
+        # Role-based restriction: ASHA worker only sees her assigned area or households created by her
         if user and user.get("role") == "asha_worker":
             assigned_area = user.get("assigned_area_id")
             if assigned_area:
-                query += " AND h.area_id = ?"
-                params.append(assigned_area)
+                query += " AND (h.area_id = ? OR h.created_by_worker_id = ?)"
+                params.extend([assigned_area, user.get("id")])
 
         if area_id:
             query += " AND h.area_id = ?"
@@ -422,7 +434,14 @@ def get_households(
         params.extend([limit, offset])
 
         rows = conn.execute(query, params).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["address_line"] = d.get("address")
+            d["drinking_water_source"] = d.get("water_source")
+            d["toilet_facility"] = bool(d.get("toilet_available") and "none" not in str(d.get("toilet_available")).lower())
+            result.append(d)
+        return result
 
 def get_household_details(household_id: str, user: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """
@@ -471,6 +490,11 @@ def get_household_details(household_id: str, user: Optional[Dict[str, Any]] = No
         surveys = [dict(s) for s in s_rows]
 
         return {
+            "id": household.get("id"),
+            "household_code": household.get("household_code"),
+            "head_of_family": household.get("head_of_family"),
+            "village": household.get("village"),
+            "pincode": household.get("pincode"),
             "household": household,
             "family_members": members,
             "member_count": len(members),
@@ -528,10 +552,18 @@ def register_household_and_survey(payload: Dict[str, Any], user: Dict[str, Any])
                 f"Duplicate Household Warning: A household with head '{head_of_family}' at address '{address}' already exists ({dup['household_code']})."
             )
 
-        # Generate sequential household code
-        seq_row = conn.execute("SELECT COUNT(*) FROM households WHERE pincode = ?", (pincode,)).fetchone()
-        next_seq = (seq_row[0] or 0) + 1
-        household_code = f"HH-{pincode}-{next_seq:03d}"
+        # Check duplicate household code if explicitly provided
+        if payload.get("household_code"):
+            household_code = payload["household_code"]
+            dup_code = conn.execute("SELECT id FROM households WHERE household_code = ?", (household_code,)).fetchone()
+            if dup_code:
+                raise DuplicateHouseholdError(f"Duplicate Household Warning: A household with code '{household_code}' already exists.")
+        else:
+            # Generate sequential household code
+            seq_row = conn.execute("SELECT COUNT(*) FROM households WHERE pincode = ?", (pincode,)).fetchone()
+            next_seq = (seq_row[0] or 0) + 1
+            household_code = f"HH-{pincode}-{next_seq:03d}"
+
         household_id = f"HH-{uuid.uuid4().hex[:8].upper()}"
 
         survey_status = payload.get("survey_status", "completed")
@@ -1047,19 +1079,27 @@ def compute_submission_hash(beneficiary_id: str, visit_type: str, visit_date: st
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 def save_confirmed_visit(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Saves a confirmed visit record received from Phase 2."""
+    """Saves a confirmed visit record received from Phase 2 into persistent SQLite database."""
     is_valid, err_msg, sanitized = validate_confirmed_visit_payload(payload)
     if not is_valid:
         raise ValidationError(err_msg)
 
     beneficiary_id = sanitized["beneficiary_id"]
+    beneficiary_name = sanitized.get("beneficiary_name")
+    age = sanitized.get("age")
     visit_type = sanitized["visit_type"]
     weight = sanitized["weight"]
+    blood_pressure = sanitized.get("blood_pressure")
+    gestational_age = sanitized.get("gestational_age")
     vaccinations_due = sanitized["vaccinations_due"]
+    symptoms_reported = sanitized.get("symptoms_reported", [])
+    negated_symptoms = sanitized.get("negated_symptoms", [])
     next_visit_date = sanitized["next_visit_date"]
     danger_signs = sanitized["danger_signs"]
     referral_required = 1 if (sanitized["referral_required"] or len(danger_signs) > 0) else 0
     visit_date = sanitized["visit_date"]
+    worker_id = sanitized.get("worker_id")
+    raw_transcript = sanitized.get("raw_transcript")
     now_iso = datetime.now().isoformat()
 
     sub_hash = compute_submission_hash(beneficiary_id, visit_type, visit_date, weight, vaccinations_due)
@@ -1076,7 +1116,9 @@ def save_confirmed_visit(payload: Dict[str, Any]) -> Dict[str, Any]:
                 f"with visit type '{visit_type}' on date '{visit_date}' already exists (ID: {existing['visit_id']})."
             )
 
-        ben_row = conn.execute("SELECT beneficiary_id FROM beneficiaries WHERE beneficiary_id = ?", (beneficiary_id,)).fetchone()
+        # Upsert Beneficiary record
+        ben_row = conn.execute("SELECT beneficiary_id, full_name, age_years FROM beneficiaries WHERE beneficiary_id = ?", (beneficiary_id,)).fetchone()
+        display_name = beneficiary_name or f"Beneficiary {beneficiary_id}"
         if not ben_row:
             conn.execute(
                 """
@@ -1084,7 +1126,12 @@ def save_confirmed_visit(payload: Dict[str, Any]) -> Dict[str, Any]:
                 (beneficiary_id, full_name, age_years, gender, category, village_ward, contact_number, notes, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (beneficiary_id, f"Beneficiary {beneficiary_id} (Synthetic)", 25, "Female", "Field Registered Beneficiary", "Demo Ward", "98000-XXXXX", "Auto-registered from Phase 2 visit.", now_iso, now_iso)
+                (beneficiary_id, display_name, age or 25, "Female", "Field Registered Beneficiary", "Assigned Ward", "Available via ASHA", "Registered via ASHA Sahayak Phase 2 voice flow.", now_iso, now_iso)
+            )
+        elif beneficiary_name:
+            conn.execute(
+                "UPDATE beneficiaries SET full_name = ?, age_years = COALESCE(?, age_years), updated_at = ? WHERE beneficiary_id = ?",
+                (beneficiary_name, age, now_iso, beneficiary_id)
             )
 
         visit_id = f"VIS-{uuid.uuid4().hex[:8].upper()}"
@@ -1094,14 +1141,17 @@ def save_confirmed_visit(payload: Dict[str, Any]) -> Dict[str, Any]:
         conn.execute(
             """
             INSERT INTO visits 
-            (visit_id, beneficiary_id, visit_type, weight, vaccinations_due, next_visit_date, 
+            (visit_id, beneficiary_id, beneficiary_name, age, visit_type, weight, blood_pressure,
+             gestational_age, vaccinations_due, symptoms_reported, negated_symptoms, next_visit_date, 
              danger_signs, referral_required, referral_facility, referral_status, 
-             confirmation_status, submission_hash, visit_date, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             confirmation_status, raw_transcript, worker_id, submission_hash, visit_date, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (visit_id, beneficiary_id, visit_type, weight, json.dumps(vaccinations_due), next_visit_date,
-             json.dumps(danger_signs), referral_required, referral_facility, referral_status, "confirmed",
-             sub_hash, visit_date, now_iso)
+            (visit_id, beneficiary_id, display_name, age, visit_type, weight, blood_pressure,
+             gestational_age, json.dumps(vaccinations_due), json.dumps(symptoms_reported),
+             json.dumps(negated_symptoms), next_visit_date, json.dumps(danger_signs),
+             referral_required, referral_facility, referral_status, "confirmed",
+             raw_transcript, worker_id, sub_hash, visit_date, now_iso)
         )
 
         created_followup_id = None
@@ -1129,9 +1179,15 @@ def save_confirmed_visit(payload: Dict[str, Any]) -> Dict[str, Any]:
         "message": "Visit record successfully saved into database.",
         "visit_id": visit_id,
         "beneficiary_id": beneficiary_id,
+        "beneficiary_name": display_name,
+        "age": age,
         "visit_type": visit_type,
         "weight": weight,
+        "blood_pressure": blood_pressure,
+        "gestational_age": gestational_age,
         "vaccinations_due": vaccinations_due,
+        "symptoms_reported": symptoms_reported,
+        "negated_symptoms": negated_symptoms,
         "next_visit_date": next_visit_date,
         "danger_signs": danger_signs,
         "referral_required": bool(referral_required),
@@ -1144,7 +1200,7 @@ def save_confirmed_visit(payload: Dict[str, Any]) -> Dict[str, Any]:
 def get_visits(beneficiary_id: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
     with get_db() as conn:
         query = """
-            SELECT v.*, b.full_name as beneficiary_name, b.village_ward, b.category as beneficiary_category
+            SELECT v.*, COALESCE(v.beneficiary_name, b.full_name) as beneficiary_name, b.village_ward, b.category as beneficiary_category
             FROM visits v
             LEFT JOIN beneficiaries b ON v.beneficiary_id = b.beneficiary_id
         """
@@ -1159,8 +1215,11 @@ def get_visits(beneficiary_id: Optional[str] = None, limit: int = 100, offset: i
         result = []
         for r in rows:
             d = dict(r)
-            d["vaccinations_due"] = json.loads(d["vaccinations_due"]) if d["vaccinations_due"] else []
-            d["danger_signs"] = json.loads(d["danger_signs"]) if d["danger_signs"] else []
+            d["id"] = d.get("visit_id")
+            d["vaccinations_due"] = json.loads(d["vaccinations_due"]) if d.get("vaccinations_due") else []
+            d["danger_signs"] = json.loads(d["danger_signs"]) if d.get("danger_signs") else []
+            d["symptoms_reported"] = json.loads(d["symptoms_reported"]) if d.get("symptoms_reported") else []
+            d["negated_symptoms"] = json.loads(d["negated_symptoms"]) if d.get("negated_symptoms") else []
             d["referral_required"] = bool(d["referral_required"])
             result.append(d)
         return result
@@ -1377,6 +1436,9 @@ def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> f
 
 def find_asha_workers(
     query: Optional[str] = None,
+    name: Optional[str] = None,
+    worker_id: Optional[str] = None,
+    phc_name: Optional[str] = None,
     pincode: Optional[str] = None,
     village: Optional[str] = None,
     locality: Optional[str] = None,
@@ -1387,9 +1449,9 @@ def find_asha_workers(
     max_distance_km: float = 35.0
 ) -> List[Dict[str, Any]]:
     """
-    Finds officially verified and active ASHA workers matching location criteria.
-    Supports PIN code, village, locality/area, taluk, district, general keyword, or GPS coordinates.
-    Strictly sanitizes output: excludes password hashes, home addresses, or private patient data.
+    Finds officially verified and active ASHA workers matching location/identity criteria.
+    Supports search by Name, Worker ID, Village, PIN code, PHC, Taluk, District, or GPS coordinates.
+    Strictly sanitizes output: excludes password hashes or private patient data.
     """
     with get_db() as conn:
         sql = """
@@ -1399,6 +1461,7 @@ def find_asha_workers(
                 COALESCE(u.badge_id, u.id) as badge_id,
                 COALESCE(u.phc_name, a.phc_name, 'Primary Health Centre') as phc_name,
                 COALESCE(u.work_contact, u.mobile, 'Available via PHC') as work_contact,
+                u.mobile,
                 u.is_verified,
                 u.is_active,
                 u.updated_at,
@@ -1420,6 +1483,21 @@ def find_asha_workers(
         """
         params = []
         clauses = []
+
+        order_clauses = []
+        if name and name.strip():
+            clauses.append("LOWER(u.full_name) LIKE ?")
+            params.append(f"%{name.strip().lower()}%")
+
+        if worker_id and worker_id.strip():
+            w_clean = worker_id.strip().lower()
+            clauses.append("(LOWER(u.id) = ? OR LOWER(COALESCE(u.badge_id, '')) = ? OR LOWER(u.id) LIKE ? OR LOWER(COALESCE(u.badge_id, '')) LIKE ?)")
+            params.extend([w_clean, w_clean, f"%{w_clean}%", f"%{w_clean}%"])
+            order_clauses.append(f"CASE WHEN LOWER(u.id) = '{w_clean}' THEN 0 ELSE 1 END")
+
+        if phc_name and phc_name.strip():
+            clauses.append("(LOWER(COALESCE(u.phc_name, '')) LIKE ? OR LOWER(COALESCE(a.phc_name, '')) LIKE ?)")
+            params.extend([f"%{phc_name.strip().lower()}%", f"%{phc_name.strip().lower()}%"])
 
         if pincode and pincode.strip():
             clauses.append("a.pincode LIKE ?")
@@ -1444,16 +1522,18 @@ def find_asha_workers(
         if query and query.strip():
             q_clean = f"%{query.strip().lower()}%"
             clauses.append(
-                "(LOWER(a.village) LIKE ? OR LOWER(a.area_name) LIKE ? OR a.pincode LIKE ? OR "
-                "LOWER(a.taluk) LIKE ? OR LOWER(a.district) LIKE ? OR LOWER(u.full_name) LIKE ? OR "
-                "LOWER(COALESCE(u.badge_id, '')) LIKE ?)"
+                "(LOWER(COALESCE(a.village, '')) LIKE ? OR LOWER(COALESCE(a.area_name, '')) LIKE ? OR COALESCE(a.pincode, '') LIKE ? OR "
+                "LOWER(COALESCE(a.taluk, '')) LIKE ? OR LOWER(COALESCE(a.district, '')) LIKE ? OR LOWER(u.full_name) LIKE ? OR "
+                "LOWER(COALESCE(u.badge_id, '')) LIKE ? OR LOWER(u.id) LIKE ? OR LOWER(COALESCE(u.phc_name, '')) LIKE ? OR "
+                "LOWER(COALESCE(a.phc_name, '')) LIKE ?)"
             )
-            params.extend([q_clean, q_clean, q_clean, q_clean, q_clean, q_clean, q_clean])
+            params.extend([q_clean] * 10)
 
         if clauses:
             sql += " AND (" + " AND ".join(clauses) + ")"
 
-        sql += " ORDER BY a.district, a.taluk, a.village, u.full_name"
+        order_clauses.extend(["a.district", "a.taluk", "a.village", "u.full_name"])
+        sql += " ORDER BY " + ", ".join(order_clauses)
         rows = conn.execute(sql, params).fetchall()
 
         results = []
@@ -1461,9 +1541,9 @@ def find_asha_workers(
             dist = None
             if latitude is not None and longitude is not None and r["latitude"] is not None and r["longitude"] is not None:
                 dist = _haversine_distance(latitude, longitude, r["latitude"], r["longitude"])
-                if dist > max_distance_km and (pincode or village or locality or taluk or district or query):
+                if dist > max_distance_km and (pincode or village or locality or taluk or district or query or name or worker_id):
                     pass
-                elif dist > max_distance_km and not (pincode or village or locality or taluk or district or query):
+                elif dist > max_distance_km and not (pincode or village or locality or taluk or district or query or name or worker_id):
                     continue
 
             service_area = f"{r['village']} - {r['area_name']} ({r['taluk']} Taluk, {r['district']})"
@@ -1471,15 +1551,20 @@ def find_asha_workers(
                 "worker_id": r["worker_id"],
                 "badge_id": r["badge_id"],
                 "full_name": r["worker_name"],
+                "name": r["worker_name"],
+                "mobile": r["mobile"] or r["work_contact"],
                 "village": r["village"] or "Assigned Sector",
                 "area_name": r["area_name"] or "Designated Ward",
+                "sector": r["area_name"] or "Designated Ward",
                 "pincode": r["pincode"] or "N/A",
                 "taluk": r["taluk"] or "N/A",
                 "district": r["district"] or "N/A",
                 "state": r["state"] or "Karnataka",
                 "phc_name": r["phc_name"],
+                "assigned_phc": r["phc_name"],
                 "designated_service_area": service_area,
                 "work_contact": r["work_contact"],
+                "account_status": "Active" if (r["is_active"] is None or r["is_active"] == 1) else "Inactive",
                 "is_verified": bool(r["is_verified"] if r["is_verified"] is not None else True),
                 "verification_status": "Verified & Registered with Health Department" if (r["is_verified"] is None or r["is_verified"] == 1) else "Pending Department Approval",
                 "last_updated": r["updated_at"] or r["created_at"],
@@ -1899,3 +1984,205 @@ def get_audit_logs(limit: int = 50) -> List[Dict[str, Any]]:
             (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+# ============================================================================
+# VOICE RECORDS (PHASE 1 -> PHASE 2 PERSISTENCE)
+# ============================================================================
+
+def save_voice_record(data: Dict[str, Any], user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Persists a voice transcription and extracted structured payload into voice_records table.
+    Enforces record ID stability across phases and detects duplicates.
+    """
+    with get_db() as conn:
+        now_iso = datetime.now().isoformat()
+        transcript = str(data.get("transcript") or "").strip()
+        language = str(data.get("language") or "kn-IN").strip()
+        worker_id = (user.get("id") if user else None) or data.get("worker_id")
+        form_type = data.get("form_type") or "clinical_visit"
+        record_id = data.get("record_id") or data.get("id")
+        if not record_id or record_id.startswith("DRAFT-"):
+            record_id = f"REC-{uuid.uuid4().hex[:8].upper()}"
+
+        sub_hash = hashlib.sha256(f"{worker_id or 'anon'}:{transcript}:{form_type}".encode()).hexdigest()
+        existing = conn.execute("SELECT * FROM voice_records WHERE submission_hash = ? OR id = ?", (sub_hash, record_id)).fetchone()
+        if existing:
+            rec = dict(existing)
+            if rec.get("structured_data"):
+                try:
+                    rec["structured_data"] = json.loads(rec["structured_data"])
+                except Exception:
+                    pass
+            return {"status": "success", "duplicate": True, "record": rec}
+
+        structured_data = data.get("report") or data.get("household_data") or data.get("extracted_report") or data.get("structured_data")
+        str_data_json = json.dumps(structured_data) if structured_data else None
+
+        conn.execute(
+            """
+            INSERT INTO voice_records 
+            (id, session_id, worker_id, form_type, transcript, language, structured_data, confidence_score, status, submission_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (record_id, data.get("session_id"), worker_id, form_type, transcript, language,
+             str_data_json, float(data.get("confidence_score", 1.0)), data.get("status", "completed"),
+             sub_hash, now_iso, now_iso)
+        )
+
+        return {
+            "status": "success",
+            "duplicate": False,
+            "record": {
+                "id": record_id,
+                "session_id": data.get("session_id"),
+                "worker_id": worker_id,
+                "form_type": form_type,
+                "transcript": transcript,
+                "language": language,
+                "structured_data": structured_data,
+                "confidence_score": float(data.get("confidence_score", 1.0)),
+                "status": data.get("status", "completed"),
+                "created_at": now_iso
+            }
+        }
+
+def get_voice_records(worker_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """Retrieves saved voice records from the SQLite database."""
+    with get_db() as conn:
+        if worker_id:
+            rows = conn.execute(
+                "SELECT * FROM voice_records WHERE worker_id = ? ORDER BY created_at DESC LIMIT ?",
+                (worker_id, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM voice_records ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("structured_data"):
+                try:
+                    d["structured_data"] = json.loads(d["structured_data"])
+                except Exception:
+                    pass
+            result.append(d)
+        return result
+
+def get_voice_record_by_id(record_id: str) -> Optional[Dict[str, Any]]:
+    """Fetches a single voice record by ID."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM voice_records WHERE id = ?", (record_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        if d.get("structured_data"):
+            try:
+                d["structured_data"] = json.loads(d["structured_data"])
+            except Exception:
+                pass
+        return d
+
+# ============================================================================
+# SELF-SERVICE ASHA WORKER REGISTRATION
+# ============================================================================
+
+def register_worker_self_service(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Self-service registration for ASHA workers.
+    Creates or reuses geographic area, generates official badge ID, hashes password,
+    creates user account, and assigns primary area in persistent SQLite database.
+    """
+    with get_db() as conn:
+        now_iso = datetime.now().isoformat()
+        username = str(data["username"]).strip().lower()
+        
+        existing = conn.execute("SELECT id FROM users WHERE LOWER(username) = ?", (username,)).fetchone()
+        if existing:
+            raise ValidationError(f"Username '{username}' is already registered. Please choose another username or log in.")
+
+        worker_id = f"USR-ASHA-{uuid.uuid4().hex[:6].upper()}"
+        full_name = str(data["full_name"]).strip()
+        mobile = str(data.get("mobile") or "").strip() or None
+        village = str(data.get("village") or "Rampur").strip()
+        pincode = str(data.get("pincode") or "571428").strip()
+        taluk = str(data.get("taluk") or "Maddur").strip()
+        district = str(data.get("district") or "Mandya").strip()
+        state = str(data.get("state") or "Karnataka").strip()
+        phc_name = str(data.get("phc_name") or "Primary Health Centre").strip()
+        sector = str(data.get("sector") or f"Sector {village}").strip()
+        badge_id = data.get("badge_id") or f"ASHA-KA-{pincode[:3]}-{uuid.uuid4().hex[:3].upper()}"
+        pwd = data.get("password") or "asha123"
+        pwd_hash = hash_password(pwd)
+
+        # Check or create area
+        area_row = conn.execute(
+            "SELECT id FROM areas WHERE LOWER(village) = ? AND pincode = ?",
+            (village.lower(), pincode)
+        ).fetchone()
+
+        if area_row:
+            area_id = area_row["id"]
+        else:
+            area_id = f"AREA-{uuid.uuid4().hex[:6].upper()}"
+            conn.execute(
+                """
+                INSERT INTO areas (id, state, district, taluk, village, area_name, pincode, phc_name, assigned_worker_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (area_id, state, district, taluk, village, sector, pincode, phc_name, worker_id, now_iso, now_iso)
+            )
+
+        # Insert user
+        conn.execute(
+            """
+            INSERT INTO users 
+            (id, username, password_hash, role, full_name, mobile, assigned_area_id,
+             badge_id, phc_name, work_contact, is_verified, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, 'asha_worker', ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+            """,
+            (worker_id, username, pwd_hash, full_name, mobile, area_id,
+             badge_id, phc_name, mobile, now_iso, now_iso)
+        )
+
+        # Link area
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO worker_area_assignments (id, worker_id, area_id, is_primary, assigned_at)
+            VALUES (?, ?, ?, 1, ?)
+            """,
+            (f"WAA-{uuid.uuid4().hex[:8].upper()}", worker_id, area_id, now_iso)
+        )
+
+        # Audit log
+        conn.execute(
+            """
+            INSERT INTO audit_logs (id, action, performed_by, target_entity, target_id, details, created_at)
+            VALUES (?, 'WORKER_SELF_REGISTERED', ?, 'USER', ?, ?, ?)
+            """,
+            (f"AUD-{uuid.uuid4().hex[:8].upper()}", worker_id, worker_id, f"Registered new ASHA worker {full_name} ({badge_id})", now_iso)
+        )
+
+        user_obj = {
+            "id": worker_id,
+            "username": username,
+            "role": "asha_worker",
+            "full_name": full_name,
+            "mobile": mobile,
+            "work_contact": mobile,
+            "badge_id": badge_id,
+            "assigned_area_id": area_id,
+            "assigned_village": village,
+            "assigned_pincode": pincode,
+            "taluk": taluk,
+            "district": district,
+            "phc_name": phc_name,
+            "sector": sector,
+            "is_verified": 1,
+            "is_active": 1,
+            "created_at": now_iso
+        }
+        return user_obj
+

@@ -32,14 +32,23 @@ class ConfirmedVisitRequest(BaseModel):
     }
     """
     beneficiary_id: str = Field(..., description="Unique Beneficiary ID, e.g. BNF-2041")
+    beneficiary_name: Optional[str] = Field(None, description="Beneficiary Full Name")
+    age: Optional[int] = Field(None, description="Beneficiary Age in Years")
     visit_type: str = Field(..., description="Type of healthcare visit e.g. 'Newborn home visit'")
     weight: Optional[str] = Field(None, description="Weight measurement e.g. '3.2 kg'")
+    blood_pressure: Optional[str] = Field(None, description="Blood pressure measurement e.g. '120/80'")
+    gestational_age: Optional[str] = Field(None, description="Gestational age e.g. '28 weeks'")
+    pregnancy_status: Optional[str] = Field(None, description="Pregnancy or delivery status")
     vaccinations_due: Optional[List[str]] = Field(default_factory=list, description="List of vaccinations due")
+    symptoms_reported: Optional[List[str]] = Field(default_factory=list, description="List of reported symptoms")
+    negated_symptoms: Optional[List[str]] = Field(default_factory=list, description="List of ruled-out/negated symptoms")
     next_visit_date: Optional[str] = Field(None, description="Scheduled follow-up date (YYYY-MM-DD) or null")
     danger_signs: Optional[List[str]] = Field(default_factory=list, description="Predefined danger signs from Phase 2")
     referral_required: bool = Field(False, description="Flag indicating whether referral to PHC is needed")
     confirmation_status: str = Field("confirmed", description="Must be 'confirmed' to save")
     visit_date: Optional[str] = Field(None, description="Optional visit date YYYY-MM-DD")
+    worker_id: Optional[str] = Field(None, description="ASHA Worker ID")
+    raw_transcript: Optional[str] = Field(None, description="Raw voice transcript")
 
 @router.post("/confirm", status_code=status.HTTP_201_CREATED)
 def confirm_and_save_visit(visit_in: ConfirmedVisitRequest):
